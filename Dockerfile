@@ -19,5 +19,6 @@ FROM alpine:3.9
 COPY --from=buildbase /usr/local/bin/snitch-svc /usr/local/bin/snitch-svc
 COPY config.yaml .
 RUN apk add --no-cache ca-certificates
+ENV KV_VIPER_FILE=config.yaml
 
-CMD ["/usr/local/bin/snitch-svc run all"]
+CMD ["/usr/local/bin/snitch-svc", "run", "all"]
