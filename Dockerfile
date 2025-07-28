@@ -17,6 +17,7 @@ RUN go build -o /usr/local/bin/snitch-svc github.com/napalmpapalam/snitch-svc
 FROM alpine:3.9
 
 COPY --from=buildbase /usr/local/bin/snitch-svc /usr/local/bin/snitch-svc
+COPY config.yaml .
 RUN apk add --no-cache ca-certificates
 
-CMD ["snitch-svc run all"]
+CMD ["/usr/local/bin/snitch-svc run all"]
