@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+
 	"gitlab.com/distributed_lab/figure"
 	"gitlab.com/distributed_lab/kit/comfig"
 	"gitlab.com/distributed_lab/kit/kv"
@@ -17,7 +19,7 @@ type telegramrer struct {
 }
 
 type TelegramConfig struct {
-	Token  string `fig:"token"`
+	Token  string `fig:"-"`
 	ChatID int64  `fig:"chat_id"`
 }
 
@@ -38,6 +40,8 @@ func (e *telegramrer) Telegram() *TelegramConfig {
 		if err != nil {
 			panic(errors.Wrap(err, "failed to parse telegram config"))
 		}
+
+		cfg.Token = os.Getenv("TELEGRAM_TOKEN")
 
 		return &cfg
 	}).(*TelegramConfig)

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+
 	"gitlab.com/distributed_lab/figure"
 	"gitlab.com/distributed_lab/kit/comfig"
 	"gitlab.com/distributed_lab/kit/kv"
@@ -17,7 +19,7 @@ type discorder struct {
 }
 
 type DiscordConfig struct {
-	Token           string   `fig:"token"`
+	Token           string   `fig:"-"`
 	TrackedChannels []string `fig:"tracked_channels"`
 	TargetGuildID   string   `fig:"target_guild_id"`
 }
@@ -39,6 +41,8 @@ func (e *discorder) Discord() *DiscordConfig {
 		if err != nil {
 			panic(errors.Wrap(err, "failed to parse saver config"))
 		}
+
+		cfg.Token = os.Getenv("DISCORD_TOKEN")
 
 		return &cfg
 	}).(*DiscordConfig)

@@ -1,0 +1,12 @@
+log:
+  disable_sentry: true
+  level: info
+
+telegram:
+  chat_id: -1002395411796
+
+discord:
+  target_guild_id: "1257044413302046853"
+  tracked_channels:
+    - "1257044413302046859"
+    - "1257044413302046858"
