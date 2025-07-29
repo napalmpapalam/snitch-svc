@@ -40,38 +40,43 @@ func Run(cfg config.Config, ctx context.Context) {
 			cachedState, exists := cache.states[vs.UserID]
 			cache.mu.RUnlock()
 
+			// Track channel updates with actions
+			type channelUpdate struct {
+				channelID string
+				action    string
+				userID    string
+			}
+			var updates []channelUpdate
+
 			// User left a voice channel
 			if vs.ChannelID == "" && exists && cachedState.ChannelID != "" {
 				// Check if we should track this event (for the channel they left)
 				if vs.GuildID == cfg.Discord().TargetGuildID && contains(cfg.Discord().TrackedChannels, cachedState.ChannelID) {
-					handleUserLeftChannel(cfg, s, tgBot, vs, cachedState.ChannelID)
+					updates = append(updates, channelUpdate{
+						channelID: cachedState.ChannelID,
+						action:    "left",
+						userID:    vs.UserID,
+					})
 				}
 
 				// Remove from cache
 				cache.mu.Lock()
 				delete(cache.states, vs.UserID)
 				cache.mu.Unlock()
-				return
-			}
-
-			// User joined a voice channel
-			if vs.ChannelID != "" {
-				// Check if we should track this event
-				if shouldTrackVoiceEvent(cfg, vs) {
-					// Check if this is a channel switch or a new join
-					if exists && cachedState.ChannelID != "" && cachedState.ChannelID != vs.ChannelID {
-						// User switched channels - handle as leave then join
-						if contains(cfg.Discord().TrackedChannels, cachedState.ChannelID) {
-							handleUserLeftChannel(cfg, s, tgBot, vs, cachedState.ChannelID)
-						}
-						handleUserJoinedChannel(cfg, s, tgBot, vs)
-					} else if !exists || cachedState.ChannelID == "" {
-						// User joined from outside any voice channel
-						handleUserJoinedChannel(cfg, s, tgBot, vs)
+			} else if vs.ChannelID != "" {
+				// User joined or switched channels
+				if exists && cachedState.ChannelID != "" && cachedState.ChannelID != vs.ChannelID {
+					// User switched channels - they left the old channel
+					if vs.GuildID == cfg.Discord().TargetGuildID && contains(cfg.Discord().TrackedChannels, cachedState.ChannelID) {
+						updates = append(updates, channelUpdate{
+							channelID: cachedState.ChannelID,
+							action:    "left",
+							userID:    vs.UserID,
+						})
 					}
 				}
 
-				// Update cache
+				// Update cache first
 				cache.mu.Lock()
 				cache.states[vs.UserID] = &discordgo.VoiceState{
 					UserID:    vs.UserID,
@@ -79,6 +84,20 @@ func Run(cfg config.Config, ctx context.Context) {
 					GuildID:   vs.GuildID,
 				}
 				cache.mu.Unlock()
+
+				// Check if the new channel should be tracked - they joined this channel
+				if shouldTrackVoiceEvent(cfg, vs) {
+					updates = append(updates, channelUpdate{
+						channelID: vs.ChannelID,
+						action:    "joined",
+						userID:    vs.UserID,
+					})
+				}
+			}
+
+			// Send updates for all affected channels
+			for _, update := range updates {
+				sendChannelMembersList(cfg, s, tgBot, update.channelID, update.action, update.userID)
 			}
 		})
 
@@ -123,6 +142,7 @@ func formatUserDisplayName(s *discordgo.Session, guildID, userID string) string 
 
 func sendTelegramNotification(cfg config.Config, bot *tgbotapi.BotAPI, message string) error {
 	msg := tgbotapi.NewMessage(cfg.Telegram().ChatID, message)
+	msg.ParseMode = "HTML"
 	_, err := bot.Send(msg)
 	if err != nil {
 		cfg.Log().Error("error sending message to telegram", logan.F{
@@ -139,32 +159,57 @@ func sendTelegramNotification(cfg config.Config, bot *tgbotapi.BotAPI, message s
 	return nil
 }
 
-func handleUserJoinedChannel(cfg config.Config, s *discordgo.Session, bot *tgbotapi.BotAPI, vs *discordgo.VoiceStateUpdate) {
-	user, _ := s.User(vs.UserID)
-	channel, _ := s.Channel(vs.ChannelID)
+func getVoiceChannelMembers(s *discordgo.Session, guildID, channelID string) []string {
+	var members []string
 
-	cfg.Log().Info("user joined channel", logan.F{
-		"user":    user.Username,
-		"channel": channel.Name,
-	})
+	// Get all voice states from cache
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
 
-	displayName := formatUserDisplayName(s, vs.GuildID, vs.UserID)
-	msg := fmt.Sprintf("🎤 %s joined voice channel\n📍 Channel: %s", displayName, channel.Name)
+	for userID, voiceState := range cache.states {
+		if voiceState.GuildID == guildID && voiceState.ChannelID == channelID {
+			displayName := formatUserDisplayName(s, guildID, userID)
+			members = append(members, displayName)
+		}
+	}
 
-	sendTelegramNotification(cfg, bot, msg)
+	return members
 }
 
-func handleUserLeftChannel(cfg config.Config, s *discordgo.Session, bot *tgbotapi.BotAPI, vs *discordgo.VoiceStateUpdate, previousChannelID string) {
-	user, _ := s.User(vs.UserID)
-	channel, _ := s.Channel(previousChannelID)
+func sendChannelMembersList(cfg config.Config, s *discordgo.Session, bot *tgbotapi.BotAPI, channelID string, action string, userID string) {
+	channel, err := s.Channel(channelID)
+	if err != nil {
+		cfg.Log().Error("failed to get channel", logan.F{
+			"error":      err,
+			"channel_id": channelID,
+		})
+		return
+	}
 
-	cfg.Log().Info("user left channel", logan.F{
-		"user":    user.Username,
-		"channel": channel.Name,
-	})
+	members := getVoiceChannelMembers(s, cfg.Discord().TargetGuildID, channelID)
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
 
-	displayName := formatUserDisplayName(s, vs.GuildID, vs.UserID)
-	msg := fmt.Sprintf("👋 %s left voice channel\n📍 Channel: %s", displayName, channel.Name)
+	// Get the display name of the user who triggered the action
+	var actionLine string
+	if action != "" && userID != "" {
+		userDisplayName := formatUserDisplayName(s, cfg.Discord().TargetGuildID, userID)
+		if action == "joined" {
+			actionLine = fmt.Sprintf("➡️ <b>%s</b> just joined\n\n", userDisplayName)
+		} else if action == "left" {
+			actionLine = fmt.Sprintf("⬅️ <b>%s</b> just left\n\n", userDisplayName)
+		}
+	}
+
+	var msg string
+	if len(members) == 0 {
+		msg = fmt.Sprintf("📍 <b>Channel: %s</b>\n🕐 %s\n%s🔇 Voice channel is now empty", channel.Name, timestamp, actionLine)
+	} else {
+		membersList := ""
+		for _, member := range members {
+			membersList += fmt.Sprintf("  • %s\n", member)
+		}
+		msg = fmt.Sprintf("📍 <b>Channel: %s</b>\n🕐 %s\n%s🎤 <b>Active Members (%d):</b>\n%s", channel.Name, timestamp, actionLine, len(members), membersList)
+	}
 
 	sendTelegramNotification(cfg, bot, msg)
 }
