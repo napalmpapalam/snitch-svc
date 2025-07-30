@@ -20,13 +20,25 @@ type voiceStateCache struct {
 	states map[string]*discordgo.VoiceState
 }
 
+type telegramMessageCache struct {
+	mu       sync.RWMutex
+	messages map[string]int // channelID -> messageID
+}
+
 var cache = &voiceStateCache{
 	states: make(map[string]*discordgo.VoiceState),
+}
+
+var msgCache = &telegramMessageCache{
+	messages: make(map[string]int),
 }
 
 func Run(cfg config.Config, ctx context.Context) {
 	discord, _ := discordgo.New("Bot " + cfg.Discord().Token)
 	defer discord.Close()
+
+	// Enable required intents for voice states
+	discord.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildVoiceStates
 
 	tgBot, err := tgbotapi.NewBotAPI(cfg.Telegram().Token)
 	if err != nil {
@@ -34,6 +46,52 @@ func Run(cfg config.Config, ctx context.Context) {
 	}
 
 	running.WithBackOff(ctx, cfg.Log(), "snitch", func(ctx context.Context) error {
+		// Add Ready handler to load voice states on startup
+		discord.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
+			cfg.Log().Info("Discord bot ready", logan.F{
+				"username": r.User.Username,
+				"guilds":   len(r.Guilds),
+			})
+
+			// Load voice states from Ready event
+			for _, guild := range r.Guilds {
+				if guild.ID != cfg.Discord().TargetGuildID {
+					continue
+				}
+
+				cfg.Log().Info("Loading voice states for guild", logan.F{
+					"guild_id":     guild.ID,
+					"voice_states": len(guild.VoiceStates),
+				})
+
+				// Populate cache with initial voice states
+				for _, vs := range guild.VoiceStates {
+					if vs.ChannelID != "" && contains(cfg.Discord().TrackedChannels, vs.ChannelID) {
+						cache.mu.Lock()
+						cache.states[vs.UserID] = &discordgo.VoiceState{
+							UserID:    vs.UserID,
+							ChannelID: vs.ChannelID,
+							GuildID:   vs.GuildID,
+						}
+						cache.mu.Unlock()
+
+						cfg.Log().Info("Cached voice state", logan.F{
+							"user_id":    vs.UserID,
+							"channel_id": vs.ChannelID,
+						})
+					}
+				}
+
+				// Send initial notifications for tracked channels with members
+				for _, channelID := range cfg.Discord().TrackedChannels {
+					members := getVoiceChannelMembers(s, guild.ID, channelID)
+					if len(members) > 0 {
+						sendChannelMembersList(cfg, s, tgBot, channelID, "", "")
+					}
+				}
+			}
+		})
+
 		discord.AddHandler(func(s *discordgo.Session, vs *discordgo.VoiceStateUpdate) {
 			// Get cached state for this user
 			cache.mu.RLock()
@@ -140,23 +198,41 @@ func formatUserDisplayName(s *discordgo.Session, guildID, userID string) string 
 	return fmt.Sprintf("%s %s (%s) %s", emoji, member.Nick, user.Username, emoji)
 }
 
-func sendTelegramNotification(cfg config.Config, bot *tgbotapi.BotAPI, message string) error {
+func sendTelegramNotification(cfg config.Config, bot *tgbotapi.BotAPI, message string) (int, error) {
 	msg := tgbotapi.NewMessage(cfg.Telegram().ChatID, message)
 	msg.ParseMode = "HTML"
-	_, err := bot.Send(msg)
+	sentMessage, err := bot.Send(msg)
 	if err != nil {
 		cfg.Log().Error("error sending message to telegram", logan.F{
 			"error":   err,
 			"msg":     msg,
 			"chat_id": cfg.Telegram().ChatID,
 		})
-		return err
+		return 0, err
 	}
 
 	cfg.Log().Info("message sent to telegram", logan.F{
 		"message": message,
+		"msg_id":  sentMessage.MessageID,
 	})
-	return nil
+	return sentMessage.MessageID, nil
+}
+
+func deleteTelegramMessage(cfg config.Config, bot *tgbotapi.BotAPI, messageID int) {
+	deleteMsg := tgbotapi.NewDeleteMessage(cfg.Telegram().ChatID, messageID)
+	_, err := bot.Send(deleteMsg)
+	if err != nil {
+		cfg.Log().Error("error deleting telegram message", logan.F{
+			"error":   err,
+			"msg_id":  messageID,
+			"chat_id": cfg.Telegram().ChatID,
+		})
+		return
+	}
+
+	cfg.Log().Info("telegram message deleted", logan.F{
+		"msg_id": messageID,
+	})
 }
 
 func getVoiceChannelMembers(s *discordgo.Session, guildID, channelID string) []string {
@@ -186,8 +262,16 @@ func sendChannelMembersList(cfg config.Config, s *discordgo.Session, bot *tgbota
 		return
 	}
 
+	// Check if there's an existing message for this channel and delete it
+	msgCache.mu.RLock()
+	oldMessageID, exists := msgCache.messages[channelID]
+	msgCache.mu.RUnlock()
+
+	if exists && oldMessageID > 0 {
+		deleteTelegramMessage(cfg, bot, oldMessageID)
+	}
+
 	members := getVoiceChannelMembers(s, cfg.Discord().TargetGuildID, channelID)
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
 
 	// Get the display name of the user who triggered the action
 	var actionLine string
@@ -202,16 +286,22 @@ func sendChannelMembersList(cfg config.Config, s *discordgo.Session, bot *tgbota
 
 	var msg string
 	if len(members) == 0 {
-		msg = fmt.Sprintf("📍 <b>Channel: %s</b>\n🕐 %s\n%s🔇 Voice channel is now empty", channel.Name, timestamp, actionLine)
+		msg = fmt.Sprintf("%s📍 <b>Channel: %s</b>\n🔇 Voice channel is now empty", actionLine, channel.Name)
 	} else {
 		membersList := ""
 		for _, member := range members {
 			membersList += fmt.Sprintf("  • %s\n", member)
 		}
-		msg = fmt.Sprintf("📍 <b>Channel: %s</b>\n🕐 %s\n%s🎤 <b>Active Members (%d):</b>\n%s", channel.Name, timestamp, actionLine, len(members), membersList)
+		msg = fmt.Sprintf("%s📍 <b>Channel: %s</b>\n🎤 <b>Active Members (%d):</b>\n%s", actionLine, channel.Name, len(members), membersList)
 	}
 
-	sendTelegramNotification(cfg, bot, msg)
+	// Send the new message and store its ID
+	newMessageID, err := sendTelegramNotification(cfg, bot, msg)
+	if err == nil && newMessageID > 0 {
+		msgCache.mu.Lock()
+		msgCache.messages[channelID] = newMessageID
+		msgCache.mu.Unlock()
+	}
 }
 
 func getRandomEmoji(username string) string {
