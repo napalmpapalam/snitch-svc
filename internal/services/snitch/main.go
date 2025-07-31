@@ -68,11 +68,7 @@ func Run(cfg config.Config, ctx context.Context) {
 				for _, vs := range guild.VoiceStates {
 					if vs.ChannelID != "" && contains(cfg.Discord().TrackedChannels, vs.ChannelID) {
 						cache.mu.Lock()
-						cache.states[vs.UserID] = &discordgo.VoiceState{
-							UserID:    vs.UserID,
-							ChannelID: vs.ChannelID,
-							GuildID:   vs.GuildID,
-						}
+						cache.states[vs.UserID] = vs
 						cache.mu.Unlock()
 
 						cfg.Log().Info("Cached voice state", logan.F{
@@ -97,6 +93,16 @@ func Run(cfg config.Config, ctx context.Context) {
 			cache.mu.RLock()
 			cachedState, exists := cache.states[vs.UserID]
 			cache.mu.RUnlock()
+
+			// Check if this is just a mute/deaf/video/stream state change
+			if exists && cachedState.ChannelID == vs.ChannelID {
+				// User is in the same channel, just updating their state
+				// Update the cache with new state but don't send notifications
+				cache.mu.Lock()
+				cache.states[vs.UserID] = vs.VoiceState
+				cache.mu.Unlock()
+				return
+			}
 
 			// Track channel updates with actions
 			type channelUpdate struct {
@@ -134,13 +140,9 @@ func Run(cfg config.Config, ctx context.Context) {
 					}
 				}
 
-				// Update cache first
+				// Update cache with full voice state
 				cache.mu.Lock()
-				cache.states[vs.UserID] = &discordgo.VoiceState{
-					UserID:    vs.UserID,
-					ChannelID: vs.ChannelID,
-					GuildID:   vs.GuildID,
-				}
+				cache.states[vs.UserID] = vs.VoiceState
 				cache.mu.Unlock()
 
 				// Check if the new channel should be tracked - they joined this channel
