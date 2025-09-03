@@ -194,6 +194,9 @@ func formatUserDisplayName(s *discordgo.Session, guildID, userID string) string 
 
 	member, err := s.GuildMember(guildID, userID)
 	if err != nil || member.Nick == "" {
+		if user.Username == "lodanorely" {
+			return fmt.Sprintf("%s %s", emoji, "таракан")
+		}
 		return fmt.Sprintf("%s %s", emoji, user.Username)
 	}
 
@@ -307,7 +310,7 @@ func sendChannelMembersList(cfg config.Config, s *discordgo.Session, bot *tgbota
 }
 
 func getRandomEmoji(username string) string {
-	if username == "rilein1" {
+	if username == "rilein1" || username == "lodanorely" {
 		return "💩"
 	}
 
