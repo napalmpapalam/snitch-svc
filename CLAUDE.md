@@ -43,30 +43,36 @@ CONFIG=config.local.yaml cargo run -- run all
 
 This service monitors Discord voice channel activity and sends notifications to Telegram when users join or leave specific channels.
 
-### Core Components
+### Two-Task Design
 
-1. **Discord Bot** (`serenity`): Listens to voice state updates in a specific guild
-2. **Telegram Bot** (`teloxide`): Sends formatted notifications to a configured chat
-3. **Voice State Cache**: `Arc<RwLock<HashMap<UserId, VoiceState>>>` to track user states and handle channel switches correctly
-4. **Configuration System**: `serde` + YAML deserialization with environment variable override support
-5. **CLI**: `clap` for command parsing and subcommand routing
+Two async Tokio tasks communicate via a bounded `mpsc` channel (capacity 32):
+
+- **Discord task** (`src/discord/`) — connects to the Discord gateway via `serenity`, listens for voice state updates, resolves display names from the guild cache, and sends `VoiceEvent`s to the channel.
+- **Telegram task** (`src/telegram/`) — receives events, formats HTML notifications, manages message lifecycle (delete old → send new), and persists state to a pinned Telegram message.
+
+Supporting modules:
+- `src/config.rs` — YAML config deserialization with environment variable injection for tokens
+- `src/events.rs` — `VoiceEvent` enum (`Joined`, `Left`, `InitialState`) and `ChannelUpdate` / `MemberInfo` structs
+- `src/emoji.rs` — random emoji pool with special-case user handling
+- `src/main.rs` — CLI (`clap`), config loading, task spawning, graceful shutdown (SIGTERM/SIGINT)
 
 ### Service Flow
 
-1. Service registers Discord voice state update handler
-2. Voice state cache tracks users to distinguish between:
+1. Discord task registers a voice state update handler
+2. On `cache_ready`, sends `InitialState` events for all tracked channels with members
+3. On voice state updates, the handler uses Serenity's built-in cache to distinguish between:
    - User joining from outside any channel
-   - User switching between channels
+   - User switching between channels (produces `Left` + `Joined`)
    - User leaving to no channel
-3. For tracked channels, sends Telegram notification with:
-   - User's nickname (or username if no nickname)
+4. For tracked channels, Telegram task sends a notification with:
+   - User's display name (guild nickname or username)
    - Random emoji (special handling for specific users)
    - Channel name and join/leave action
    - List of current members in the channel
 
 ### Reference: Go Implementation
 
-The original Go implementation is preserved in `golang/` for reference during the rewrite.
+The original Go implementation is preserved in `golang/` for reference.
 
 ## Important Implementation Details
 
@@ -352,24 +358,6 @@ impl ServerConfigBuilder {
 // Usage: ServerConfig::builder("localhost", 8080).max_connections(200).build()
 ```
 
-### Sealed Traits for Extensibility Control
-
-```rust
-mod private {
-    pub trait Sealed {}
-}
-
-pub trait Format: private::Sealed {
-    fn encode(&self, data: &[u8]) -> Vec<u8>;
-}
-
-pub struct Json;
-impl private::Sealed for Json {}
-impl Format for Json {
-    fn encode(&self, data: &[u8]) -> Vec<u8> { todo!() }
-}
-```
-
 ### Traits and Generics
 
 ```rust
@@ -449,19 +437,6 @@ async fn fetch_with_timeout(url: &str) -> eyre::Result<String> {
 }
 ```
 
-### API Response Envelope
-
-```rust
-#[derive(Debug, serde::Serialize)]
-#[serde(tag = "status")]
-pub enum ApiResponse<T: serde::Serialize> {
-    #[serde(rename = "ok")]
-    Ok { data: T },
-    #[serde(rename = "error")]
-    Error { message: String },
-}
-```
-
 ### Anti-Patterns to Avoid
 
 ```rust
@@ -518,33 +493,6 @@ const API_KEY: &str = "sk-abc123...";
 fn load_api_key() -> eyre::Result<String> {
     std::env::var("PAYMENT_API_KEY")
         .wrap_err("PAYMENT_API_KEY must be set")
-}
-```
-
-### Input Validation
-- Validate all user input at system boundaries before processing
-- Use the type system to enforce invariants (newtype pattern)
-- Parse, don't validate — convert unstructured data to typed structs at the boundary
-
-```rust
-pub struct Email(String);
-
-impl Email {
-    pub fn parse(input: &str) -> Result<Self, ValidationError> {
-        let trimmed = input.trim();
-        let at_pos = trimmed.find('@')
-            .filter(|&p| p > 0 && p < trimmed.len() - 1)
-            .ok_or_else(|| ValidationError::InvalidEmail(input.to_string()))?;
-        let domain = &trimmed[at_pos + 1..];
-        if trimmed.len() > 254 || !domain.contains('.') {
-            return Err(ValidationError::InvalidEmail(input.to_string()));
-        }
-        Ok(Self(trimmed.to_string()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 ```
 
