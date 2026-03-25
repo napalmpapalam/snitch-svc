@@ -8,16 +8,83 @@ name = "snitch"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4", default-features = false, features = ["derive", "std", "help"] }
+chrono = { version = "0.4", default-features = false, features = [
+  "serde",
+  "clock",
+] }
+chrono-tz = { version = "0.10", default-features = false }
+clap = { version = "4", default-features = false, features = [
+  "derive",
+  "std",
+  "help",
+] }
 eyre = "0.6"
 secrecy = { version = "0.10", features = ["serde"] }
-rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+rand = { version = "0.8", default-features = false, features = [
+  "std",
+  "std_rng",
+] }
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-serenity = { version = "0.12", default-features = false, features = ["model", "rustls_backend", "gateway", "cache", "client"] }
-teloxide-core = { version = "0.13", default-features = false, features = ["rustls"] }
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "signal"] }
+serenity = { version = "0.12", default-features = false, features = [
+  "model",
+  "rustls_backend",
+  "gateway",
+  "cache",
+  "client",
+] }
+teloxide-core = { version = "0.13", default-features = false, features = [
+  "rustls",
+] }
+tokio = { version = "1", default-features = false, features = [
+  "rt-multi-thread",
+  "macros",
+  "signal",
+] }
 tokio-util = { version = "0.7", default-features = false }
 tracing = { version = "0.1", default-features = false }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "ansi"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+  "env-filter",
+  "fmt",
+  "ansi",
+] }
+
+[profile.release]
+opt-level = "z"
+debug = false
+rpath = false
+lto = "fat"
+debug-assertions = false
+codegen-units = 1
+panic = "abort"
+incremental = false
+overflow-checks = false
+strip = true
+
+[workspace.lints.rust]
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+large_enum_variant = "allow"
+cast_possible_truncation = "deny"
+cast_sign_loss = "deny"
+redundant_clone = "deny"
+wildcard_imports = "deny"
+indexing_slicing = "deny"
+needless_collect = "deny"
+trivially_copy_pass_by_ref = "deny"
+match_bool = "deny"
+map_entry = "deny"
+manual_flatten = "deny"
+needless_return = "deny"
+semicolon_if_nothing_returned = "deny"
+needless_question_mark = "deny"
+explicit_into_iter_loop = "deny"
+iter_nth_zero = "deny"
+bind_instead_of_map = "deny"
+manual_filter_map = "deny"
+double_ended_iterator_last = "allow"

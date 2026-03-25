@@ -1,16 +1,82 @@
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
 use serenity::model::id::ChannelId;
 
-pub struct MemberInfo {
-    pub username: String,
-    pub display_name: String,
+/// Newtype wrapper for Discord usernames. Prevents mixing up with display names.
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Username(String);
+
+impl Username {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+}
+
+impl fmt::Display for Username {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for Username {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Newtype wrapper for Discord channel display names.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ChannelName(String);
+
+impl ChannelName {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+}
+
+impl fmt::Display for ChannelName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for ChannelName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Newtype wrapper for user display names (guild nickname or username fallback).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DisplayName(String);
+
+impl DisplayName {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+}
+
+impl fmt::Display for DisplayName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for DisplayName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
 }
 
 pub struct ChannelUpdate {
-    pub username: String,
-    pub display_name: String,
-    pub channel_name: String,
+    pub username: Username,
+    pub display_name: DisplayName,
+    pub channel_name: ChannelName,
     pub channel_id: ChannelId,
-    pub members: Vec<MemberInfo>,
 }
 
 pub enum VoiceEvent {

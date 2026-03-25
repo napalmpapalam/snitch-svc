@@ -25,9 +25,6 @@ struct Cli {
 enum Command {
     /// Start the service
     Run {
-        /// Log notifications instead of sending to Telegram
-        #[arg(long)]
-        dry_run: bool,
         #[command(subcommand)]
         service: Service,
     },
@@ -51,9 +48,8 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Run {
-            dry_run,
             service: Service::All | Service::Snitch,
-        } => run_service(config, dry_run).await?,
+        } => run_service(config).await?,
     }
 
     Ok(())
@@ -75,15 +71,16 @@ fn init_logging(log_config: &config::LogConfig) {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
-async fn run_service(config: Config, dry_run: bool) -> Result<()> {
-    tracing::info!(dry_run, "starting snitch service");
+async fn run_service(config: Config) -> Result<()> {
+    tracing::info!("starting snitch service");
     tracing::debug!(?config, "loaded configuration");
 
     let (tx, rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
     let cancel = CancellationToken::new();
 
+    let tracked_channels = config.discord.tracked_channels.clone();
     let mut discord_handle = tokio::spawn(discord::run(config.discord, tx, cancel.clone()));
-    let mut telegram_handle = tokio::spawn(telegram::run(config.telegram, rx, dry_run));
+    let mut telegram_handle = tokio::spawn(telegram::run(config.telegram, rx, tracked_channels));
 
     // Wait for shutdown signal or early task failure
     tokio::select! {

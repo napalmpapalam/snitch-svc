@@ -26,8 +26,14 @@ pub struct LogConfig {
 pub struct TelegramConfig {
     pub chat_id: ChatId,
     pub state_chat_id: ChatId,
+    #[serde(default = "default_tick_minutes")]
+    pub duration_tick_minutes: u64,
     #[serde(skip)]
     pub token: SecretString,
+}
+
+fn default_tick_minutes() -> u64 {
+    5
 }
 
 #[derive(Debug, Deserialize)]
