@@ -28,54 +28,105 @@ pub(crate) fn detect_event_achievements(
     recent_leaves: &RecentLeaves,
     pre_channel_count: usize,
     removed_session: Option<&SessionInfo>,
+    shown_achievements: &mut ShownAchievements,
 ) -> Vec<Achievement> {
     let update = event.update();
     let username = &update.username;
     let display = &update.display_name;
     let channel_id = update.channel_id;
     let now = Utc::now();
+    let today = now.with_timezone(&Kyiv).date_naive();
+    let today_shown = shown_achievements.entry(today).or_default();
     let mut achievements = Vec::new();
 
     match event {
         VoiceEvent::Joined(_) => {
             // Party starter: channel was empty before this join
             if pre_channel_count == 0 {
-                achievements.push(make(AchievementKind::PartyStarter, username, display));
+                try_add(
+                    &mut achievements,
+                    today_shown,
+                    AchievementKind::PartyStarter,
+                    username,
+                    display,
+                );
             }
 
             // Dynamic duo: channel now has exactly 2 members
             let post_count = count_in_channel(sessions, channel_id);
             if post_count == 2 {
-                achievements.push(make(AchievementKind::DynamicDuo, username, display));
+                try_add(
+                    &mut achievements,
+                    today_shown,
+                    AchievementKind::DynamicDuo,
+                    username,
+                    display,
+                );
             }
 
             // Full house: channel has 5+ members
             if post_count >= 5 {
-                achievements.push(make(AchievementKind::FullHouse, username, display));
+                try_add(
+                    &mut achievements,
+                    today_shown,
+                    AchievementKind::FullHouse,
+                    username,
+                    display,
+                );
             }
 
             // Boomerang: left same channel < 5 min ago
             if let Some(leave) = recent_leaves.get(username) {
                 let mins_since = (now - leave.left_at).num_minutes();
                 if leave.channel_id == channel_id && mins_since < 5 {
-                    achievements.push(make(AchievementKind::Boomerang, username, display));
+                    try_add(
+                        &mut achievements,
+                        today_shown,
+                        AchievementKind::Boomerang,
+                        username,
+                        display,
+                    );
                 }
                 // Channel hopper: left different channel < 1 min ago
                 if leave.channel_id != channel_id && mins_since < 1 {
-                    achievements.push(make(AchievementKind::ChannelHopper, username, display));
+                    try_add(
+                        &mut achievements,
+                        today_shown,
+                        AchievementKind::ChannelHopper,
+                        username,
+                        display,
+                    );
                 }
             }
 
             // Time-of-day achievements
             let kyiv_hour = now.with_timezone(&Kyiv).time().hour();
             if kyiv_hour < 4 {
-                achievements.push(make(AchievementKind::NightOwl, username, display));
+                try_add(
+                    &mut achievements,
+                    today_shown,
+                    AchievementKind::NightOwl,
+                    username,
+                    display,
+                );
             }
             if (5..8).contains(&kyiv_hour) {
-                achievements.push(make(AchievementKind::EarlyBird, username, display));
+                try_add(
+                    &mut achievements,
+                    today_shown,
+                    AchievementKind::EarlyBird,
+                    username,
+                    display,
+                );
             }
             if (12..13).contains(&kyiv_hour) {
-                achievements.push(make(AchievementKind::LunchBreak, username, display));
+                try_add(
+                    &mut achievements,
+                    today_shown,
+                    AchievementKind::LunchBreak,
+                    username,
+                    display,
+                );
             }
         }
         VoiceEvent::Left(_) => {
@@ -83,13 +134,25 @@ pub(crate) fn detect_event_achievements(
             if let Some(session) = removed_session
                 && (now - session.joined_at).num_seconds() < 60
             {
-                achievements.push(make(AchievementKind::SpeedRun, username, display));
+                try_add(
+                    &mut achievements,
+                    today_shown,
+                    AchievementKind::SpeedRun,
+                    username,
+                    display,
+                );
             }
 
             // Last one standing: channel now has exactly 1 member
             let post_count = count_in_channel(sessions, channel_id);
             if post_count == 1 {
-                achievements.push(make(AchievementKind::LastOneStanding, username, display));
+                try_add(
+                    &mut achievements,
+                    today_shown,
+                    AchievementKind::LastOneStanding,
+                    username,
+                    display,
+                );
             }
         }
         VoiceEvent::InitialState(_) => {}

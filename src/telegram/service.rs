@@ -117,6 +117,7 @@ impl TelegramService {
             &self.recent_leaves,
             pre_channel_count,
             removed_session.as_ref(),
+            &mut self.shown_achievements,
         );
 
         // Format combined message
