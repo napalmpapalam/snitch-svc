@@ -1,23 +1,23 @@
-use std::collections::HashMap;
-
+use chrono::{TimeDelta, Utc};
 use serenity::model::id::ChannelId;
 
 use crate::emoji;
 use crate::events::VoiceEvent;
 
-use super::state::SessionInfo;
+use super::state::{ChannelNames, Sessions};
 
 /// Formats a combined message for a voice event (join/leave) showing all active channels.
 pub(crate) fn format_event_message(
     event: &VoiceEvent,
-    sessions: &HashMap<String, SessionInfo>,
+    sessions: &Sessions,
     tracked_channels: &[ChannelId],
+    channel_names: &ChannelNames,
 ) -> String {
     let update = event.update();
     let mut msg = String::from("<blockquote>");
 
     // Action line
-    let display = format_display_name(&update.username, &update.display_name);
+    let display = format_display_name(update.username.as_ref(), &update.display_name);
     msg.push_str(&format!(
         "{} <b>{}</b> {}\n",
         event.icon(),
@@ -32,6 +32,8 @@ pub(crate) fn format_event_message(
         return msg;
     }
 
+    let now = Utc::now();
+
     // Render each tracked channel that has members
     for &channel_id in tracked_channels {
         let channel_members: Vec<_> = sessions
@@ -43,12 +45,10 @@ pub(crate) fn format_event_message(
             continue;
         }
 
-        // Use channel name from the event if it matches, otherwise fall back to ID
-        let channel_name = if update.channel_id == channel_id {
-            update.channel_name.clone()
-        } else {
-            channel_id.to_string()
-        };
+        let channel_name = channel_names
+            .get(&channel_id)
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| channel_id.to_string());
 
         msg.push_str(&format!(
             "\n🎙 <b>Channel:</b> {}\n",
@@ -59,16 +59,43 @@ pub(crate) fn format_event_message(
 
         for (_, session) in &channel_members {
             let emoji = emoji::random();
+            let duration = format_duration(now - session.joined_at);
             msg.push_str(&format!(
-                "• {} {}\n",
+                "• {} {} ({})\n",
                 emoji,
-                html_escape(&session.display_name)
+                html_escape(&session.display_name),
+                duration,
             ));
         }
     }
 
     msg.push_str("</blockquote>");
     msg
+}
+
+/// Formats a time delta into a human-readable duration string.
+///
+/// ```text
+/// 1h 30m  → "1h 30m"
+///     45m → "45m"
+///     30s → "<1m"
+/// ```
+pub(crate) fn format_duration(delta: TimeDelta) -> String {
+    let total_minutes = delta.num_minutes();
+    if total_minutes < 1 {
+        return "&lt;1m".to_owned();
+    }
+
+    let hours = delta.num_hours();
+    let minutes = total_minutes % 60;
+
+    if hours > 0 && minutes > 0 {
+        format!("{hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h")
+    } else {
+        format!("{minutes}m")
+    }
 }
 
 fn format_display_name(username: &str, display_name: &str) -> String {

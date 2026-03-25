@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use chrono::Utc;
 use eyre::{Result, WrapErr};
 use serenity::model::id::ChannelId;
 use teloxide_core::Bot;
@@ -10,7 +9,7 @@ use teloxide_core::types::{ChatId, MessageId, ParseMode};
 use crate::events::VoiceEvent;
 
 use super::format::format_event_message;
-use super::state::{PersistentState, SessionInfo};
+use super::state::{ChannelNames, PersistentState, SessionInfo, Sessions, WeeklyStats};
 
 pub struct Notifier {
     bot: Bot,
@@ -19,7 +18,9 @@ pub struct Notifier {
     tracked_channels: Vec<ChannelId>,
     state_message_id: Option<MessageId>,
     message_id: Option<MessageId>,
-    sessions: HashMap<String, SessionInfo>,
+    sessions: Sessions,
+    weekly_stats: WeeklyStats,
+    channel_names: ChannelNames,
 }
 
 impl Notifier {
@@ -36,7 +37,9 @@ impl Notifier {
             tracked_channels,
             state_message_id: None,
             message_id: None,
-            sessions: HashMap::new(),
+            sessions: Sessions::new(),
+            weekly_stats: WeeklyStats::default(),
+            channel_names: ChannelNames::new(),
         };
         notifier.load_state().await?;
         Ok(notifier)
@@ -55,21 +58,11 @@ impl Notifier {
             "voice event"
         );
 
-        // Update sessions
-        match event {
-            VoiceEvent::Joined(u) | VoiceEvent::InitialState(u) => {
-                self.sessions.insert(
-                    u.username.clone(),
-                    SessionInfo {
-                        display_name: u.display_name.clone(),
-                        channel_id: u.channel_id,
-                    },
-                );
-            }
-            VoiceEvent::Left(u) => {
-                self.sessions.remove(&u.username);
-            }
-        }
+        // Update channel name cache
+        self.channel_names
+            .insert(update.channel_id, update.channel_name.clone());
+
+        self.update_sessions(event);
 
         // Don't send messages for initial state — just populate sessions
         if event.is_initial_state() {
@@ -82,7 +75,12 @@ impl Notifier {
         }
 
         // Format combined message
-        let message = format_event_message(event, &self.sessions, &self.tracked_channels);
+        let message = format_event_message(
+            event,
+            &self.sessions,
+            &self.tracked_channels,
+            &self.channel_names,
+        );
 
         // Delete old message, send new one (keeps it at bottom of chat)
         if let Some(old_msg_id) = self.message_id.take() {
@@ -96,6 +94,43 @@ impl Notifier {
         self.persist_state().await?;
 
         Ok(())
+    }
+
+    fn update_sessions(&mut self, event: &VoiceEvent) {
+        match event {
+            VoiceEvent::Joined(u) | VoiceEvent::InitialState(u) => {
+                self.sessions.insert(
+                    u.username.clone(),
+                    SessionInfo {
+                        display_name: u.display_name.clone(),
+                        channel_id: u.channel_id,
+                        joined_at: Utc::now(),
+                    },
+                );
+            }
+            VoiceEvent::Left(u) => {
+                if let Some(session) = self.sessions.remove(&u.username) {
+                    let duration_secs = (Utc::now() - session.joined_at).num_seconds();
+                    if duration_secs <= 0 {
+                        return;
+                    }
+
+                    let user_stats = self
+                        .weekly_stats
+                        .users
+                        .entry(u.username.clone())
+                        .or_default();
+                    user_stats.total_seconds += duration_secs;
+
+                    tracing::debug!(
+                        username = %u.username,
+                        duration_secs,
+                        total_secs = user_stats.total_seconds,
+                        "accumulated voice time"
+                    );
+                }
+            }
+        }
     }
 
     async fn send_message(&self, text: &str) -> Result<Option<MessageId>> {
@@ -154,6 +189,8 @@ impl Notifier {
 
             self.message_id = state.message_id.map(MessageId);
             self.sessions = state.sessions;
+            self.weekly_stats = state.weekly_stats.unwrap_or_default();
+            self.channel_names = state.channel_names;
 
             tracing::info!(
                 state_msg_id = pinned.id.0,
@@ -215,6 +252,8 @@ impl Notifier {
         let state = PersistentState {
             message_id: self.message_id.map(|m| m.0),
             sessions: self.sessions.clone(),
+            weekly_stats: Some(self.weekly_stats.clone()),
+            channel_names: self.channel_names.clone(),
         };
         let text = serde_json::to_string(&state).unwrap_or_else(|_| "{}".to_owned());
 

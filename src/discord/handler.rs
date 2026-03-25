@@ -6,7 +6,7 @@ use serenity::prelude::{Context, EventHandler};
 use tokio::sync::mpsc;
 
 use crate::config::DiscordConfig;
-use crate::events::{ChannelUpdate, VoiceEvent};
+use crate::events::{ChannelName, ChannelUpdate, Username, VoiceEvent};
 
 pub struct Handler {
     pub config: DiscordConfig,
@@ -93,8 +93,8 @@ impl Handler {
             let channel_name = guild
                 .channels
                 .get(&channel_id)
-                .map(|c| c.name.clone())
-                .unwrap_or_else(|| channel_id.to_string());
+                .map(|c| ChannelName::new(&c.name))
+                .unwrap_or_else(|| ChannelName::new(channel_id.to_string()));
 
             let voice_states: Vec<_> = guild
                 .voice_states
@@ -123,43 +123,51 @@ impl Handler {
     }
 }
 
-/// Returns (raw_username, display_name)
+/// Returns (username, display_name) from the guild cache.
 fn resolve_display_names(
     ctx: &Context,
     guild_id: GuildId,
     voice_state: &VoiceState,
-) -> (String, String) {
+) -> (Username, String) {
     ctx.cache
         .guild(guild_id)
         .and_then(|guild| {
             guild.members.get(&voice_state.user_id).map(|member| {
-                let username = member.user.name.clone();
-                let display = member.nick.as_deref().unwrap_or(&username).to_owned();
+                let username = Username::new(&member.user.name);
+                let display = member
+                    .nick
+                    .as_deref()
+                    .unwrap_or(&member.user.name)
+                    .to_owned();
                 (username, display)
             })
         })
         .unwrap_or_else(|| {
             let id = voice_state.user_id.to_string();
-            (id.clone(), id)
+            (Username::new(&id), id)
         })
 }
 
-/// Returns (raw_username, display_name) from a guild's member cache
+/// Returns (username, display_name) from a guild's member cache.
 fn resolve_display_names_from_guild(
     guild: &serenity::model::guild::Guild,
     user_id: UserId,
-) -> (String, String) {
+) -> (Username, String) {
     guild
         .members
         .get(&user_id)
         .map(|member| {
-            let username = member.user.name.clone();
-            let display = member.nick.as_deref().unwrap_or(&username).to_owned();
+            let username = Username::new(&member.user.name);
+            let display = member
+                .nick
+                .as_deref()
+                .unwrap_or(&member.user.name)
+                .to_owned();
             (username, display)
         })
         .unwrap_or_else(|| {
             let id = user_id.to_string();
-            (id.clone(), id)
+            (Username::new(&id), id)
         })
 }
 
@@ -167,17 +175,21 @@ fn build_channel_update(
     ctx: &Context,
     guild_id: GuildId,
     channel_id: ChannelId,
-    username: &str,
+    username: &Username,
     display_name: &str,
 ) -> ChannelUpdate {
     let channel_name = ctx
         .cache
         .guild(guild_id)
-        .and_then(|g| g.channels.get(&channel_id).map(|c| c.name.clone()))
-        .unwrap_or_else(|| channel_id.to_string());
+        .and_then(|g| {
+            g.channels
+                .get(&channel_id)
+                .map(|c| ChannelName::new(&c.name))
+        })
+        .unwrap_or_else(|| ChannelName::new(channel_id.to_string()));
 
     ChannelUpdate {
-        username: username.to_owned(),
+        username: username.clone(),
         display_name: display_name.to_owned(),
         channel_name,
         channel_id,
