@@ -1,12 +1,12 @@
 use serenity::async_trait;
 use serenity::model::gateway::Ready;
-use serenity::model::id::{ChannelId, GuildId};
+use serenity::model::id::{ChannelId, GuildId, UserId};
 use serenity::model::voice::VoiceState;
 use serenity::prelude::{Context, EventHandler};
 use tokio::sync::mpsc;
 
 use crate::config::DiscordConfig;
-use crate::events::{ChannelUpdate, VoiceEvent};
+use crate::events::{ChannelUpdate, MemberInfo, VoiceEvent};
 
 pub struct Handler {
     pub config: DiscordConfig,
@@ -32,7 +32,6 @@ impl EventHandler for Handler {
         let old_channel = old.as_ref().and_then(|s| s.channel_id);
         let new_channel = new.channel_id;
 
-        // Same channel or no channel change → mute/deaf/video toggle, ignore
         if old_channel == new_channel {
             return;
         }
@@ -91,11 +90,11 @@ impl Handler {
         };
 
         for &channel_id in &self.config.tracked_channels {
-            let members: Vec<String> = guild
+            let members: Vec<MemberInfo> = guild
                 .voice_states
                 .values()
                 .filter(|vs| vs.channel_id == Some(channel_id))
-                .map(|vs| resolve_member_name(&guild, vs.user_id))
+                .map(|vs| resolve_member_info(&guild, vs.user_id))
                 .collect();
 
             if members.is_empty() {
@@ -147,21 +146,25 @@ fn resolve_display_names(
         })
 }
 
-fn resolve_member_name(
-    guild: &serenity::model::guild::Guild,
-    user_id: serenity::model::id::UserId,
-) -> String {
+fn resolve_member_info(guild: &serenity::model::guild::Guild, user_id: UserId) -> MemberInfo {
     guild
         .members
         .get(&user_id)
         .map(|member| {
-            member
-                .nick
-                .as_deref()
-                .unwrap_or(&member.user.name)
-                .to_owned()
+            let username = member.user.name.clone();
+            let display_name = member.nick.as_deref().unwrap_or(&username).to_owned();
+            MemberInfo {
+                username,
+                display_name,
+            }
         })
-        .unwrap_or_else(|| user_id.to_string())
+        .unwrap_or_else(|| {
+            let id = user_id.to_string();
+            MemberInfo {
+                username: id.clone(),
+                display_name: id,
+            }
+        })
 }
 
 fn build_channel_update(
@@ -179,13 +182,13 @@ fn build_channel_update(
         .map(|c| c.name.clone())
         .unwrap_or_else(|| channel_id.to_string());
 
-    let members: Vec<String> = guild
+    let members: Vec<MemberInfo> = guild
         .as_ref()
         .map(|g| {
             g.voice_states
                 .values()
                 .filter(|vs| vs.channel_id == Some(channel_id))
-                .map(|vs| resolve_member_name(g, vs.user_id))
+                .map(|vs| resolve_member_info(g, vs.user_id))
                 .collect()
         })
         .unwrap_or_default();

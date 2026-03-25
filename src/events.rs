@@ -1,11 +1,16 @@
 use serenity::model::id::ChannelId;
 
+pub struct MemberInfo {
+    pub username: String,
+    pub display_name: String,
+}
+
 pub struct ChannelUpdate {
     pub username: String,
     pub display_name: String,
     pub channel_name: String,
     pub channel_id: ChannelId,
-    pub members: Vec<String>,
+    pub members: Vec<MemberInfo>,
 }
 
 pub enum VoiceEvent {
@@ -31,15 +36,15 @@ impl VoiceEvent {
 
     pub fn icon(&self) -> &'static str {
         match self {
-            Self::Joined(_) | Self::InitialState(_) => "➡️",
-            Self::Left(_) => "⬅️",
+            Self::Joined(_) | Self::InitialState(_) => "🎉",
+            Self::Left(_) => "👋",
         }
     }
 
     pub fn verb(&self) -> &'static str {
         match self {
-            Self::Joined(_) | Self::InitialState(_) => "just joined",
-            Self::Left(_) => "just left",
+            Self::Joined(_) | Self::InitialState(_) => "joined",
+            Self::Left(_) => "left",
         }
     }
 

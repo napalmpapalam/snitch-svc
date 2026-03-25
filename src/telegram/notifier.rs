@@ -8,7 +8,7 @@ use teloxide_core::prelude::Requester;
 use teloxide_core::types::{ChatId, MessageId, ParseMode};
 
 use crate::emoji;
-use crate::events::VoiceEvent;
+use crate::events::{MemberInfo, VoiceEvent};
 
 pub struct Notifier {
     bot: Option<Bot>,
@@ -52,7 +52,6 @@ impl Notifier {
             display_name = %update.display_name,
             channel = %update.channel_name,
             channel_id = %update.channel_id,
-            members = ?update.members,
             "voice event"
         );
 
@@ -60,12 +59,9 @@ impl Notifier {
             return Ok(());
         }
 
-        // Initial state: skip if we already have a message for this channel
-        if event.is_initial_state() && self.message_cache.contains_key(&update.channel_id) {
-            tracing::debug!(
-                channel_id = %update.channel_id,
-                "skipping initial state, message already exists"
-            );
+        // Skip initial state entirely — only send on actual join/leave
+        if event.is_initial_state() {
+            tracing::debug!(channel_id = %update.channel_id, "skipping initial state");
             return Ok(());
         }
 
@@ -234,44 +230,61 @@ impl Notifier {
 
 fn format_notification(event: &VoiceEvent) -> String {
     let update = event.update();
-    let mut msg = String::new();
+    let mut msg = String::from("<blockquote>");
 
-    // Action line (skip for initial state where display_name is empty)
-    if !update.display_name.is_empty() {
-        let display = format_display_name(&update.username, &update.display_name);
-        msg.push_str(&format!(
-            "{} <b>{display}</b> {}\n\n",
-            event.icon(),
-            event.verb()
-        ));
-    }
+    // Action line
+    let display = format_display_name(&update.username, &update.display_name);
+    msg.push_str(&format!(
+        "{} <b>{}</b> {}\n\n",
+        event.icon(),
+        html_escape(&display),
+        event.verb()
+    ));
 
-    msg.push_str(&format!("📍 <b>Channel: {}</b>\n", update.channel_name));
+    // Channel info
+    msg.push_str(&format!(
+        "🎙 <b>Channel:</b> {}\n",
+        html_escape(&update.channel_name)
+    ));
 
     if update.members.is_empty() {
-        msg.push_str("🔇 Voice channel is now empty");
+        msg.push_str("💤 No one in channel");
     } else {
-        msg.push_str(&format!(
-            "🎤 <b>Active Members ({}):</b>\n",
-            update.members.len()
-        ));
+        msg.push_str(&format!("👤 <b>Members:</b> {}\n\n", update.members.len()));
+        msg.push_str("📋 <b>Now in channel:</b>\n\n");
         for member in &update.members {
-            let emoji = emoji::for_user(member);
-            msg.push_str(&format!("  • {emoji} {member}\n"));
+            let formatted = format_member_name(member);
+            msg.push_str(&format!("• {}\n", html_escape(&formatted)));
         }
     }
 
+    msg.push_str("</blockquote>");
     msg
 }
 
 fn format_display_name(username: &str, display_name: &str) -> String {
     let emoji = emoji::for_user(username);
 
+    if username == "lodanorely" {
+        return format!("{emoji} таракан {emoji}");
+    }
+
     if display_name != username {
         format!("{emoji} {display_name} ({username}) {emoji}")
     } else {
         format!("{emoji} {username}")
     }
+}
+
+fn format_member_name(member: &MemberInfo) -> String {
+    let emoji = emoji::for_user(&member.username);
+    format!("{emoji} {}", member.display_name)
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn parse_state(text: &str) -> HashMap<ChannelId, MessageId> {
