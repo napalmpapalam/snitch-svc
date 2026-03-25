@@ -1,24 +1,17 @@
-FROM golang:1.24.1-alpine as buildbase
+FROM rust:1.92-slim AS builder
 
-WORKDIR /go/src/github.com/napalmpapalam/snitch-svc
-RUN apk add build-base
-COPY . .
-RUN go mod tidy
-RUN go mod vendor
-
-ENV GO111MODULE="on"
-ENV CGO_ENABLED=1
-ENV GOOS="linux"
-
-RUN go build -o /usr/local/bin/snitch-svc github.com/napalmpapalam/snitch-svc
+WORKDIR /app
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+COPY Cargo.toml Cargo.lock ./
+COPY src/ src/
+RUN cargo build --release
 
 ###
 
-FROM alpine:3.9
+FROM debian:bookworm-slim
 
-COPY --from=buildbase /usr/local/bin/snitch-svc /usr/local/bin/snitch-svc
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/snitch /usr/local/bin/snitch
 COPY config.yaml .
-RUN apk add --no-cache ca-certificates
-ENV KV_VIPER_FILE=config.yaml
 
-CMD ["/usr/local/bin/snitch-svc", "run", "all"]
+CMD ["snitch", "run", "all"]

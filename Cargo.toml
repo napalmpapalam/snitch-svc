@@ -1,0 +1,23 @@
+[package]
+name = "snitch"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "snitch"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", default-features = false, features = ["derive", "std", "help"] }
+eyre = "0.6"
+secrecy = { version = "0.10", features = ["serde"] }
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+serenity = { version = "0.12", default-features = false, features = ["model", "rustls_backend", "gateway", "cache", "client"] }
+teloxide-core = { version = "0.13", default-features = false, features = ["rustls"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "signal"] }
+tokio-util = { version = "0.7", default-features = false }
+tracing = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "ansi"] }

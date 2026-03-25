@@ -1,9 +1,13 @@
 log:
-  disable_sentry: true
   level: info
+  filter:
+    - "hyper_util=warn"
+    - "serenity=warn"
+    - "snitch::telegram::notifier=debug"
 
 telegram:
   chat_id: -1002395411796
+  state_chat_id: -1003690216546
 
 discord:
   target_guild_id: "1257044413302046853"
