@@ -32,3 +32,4 @@ snitch-svc
 # Editor/IDE
  .idea/
  .vscode/
+golang
