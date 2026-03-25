@@ -4,6 +4,7 @@ use serenity::model::id::ChannelId;
 use crate::emoji;
 use crate::events::VoiceEvent;
 
+use super::achievements::Achievement;
 use super::state::{ChannelNames, Sessions};
 
 /// Formats a combined message for a voice event (join/leave) showing all active channels.
@@ -12,12 +13,13 @@ pub(crate) fn format_event_message(
     sessions: &Sessions,
     tracked_channels: &[ChannelId],
     channel_names: &ChannelNames,
+    achievements: &[Achievement],
 ) -> String {
     let update = event.update();
     let mut msg = String::from("<blockquote>");
 
     // Action line
-    let display = format_display_name(update.username.as_ref(), &update.display_name);
+    let display = format_display_name(update.username.as_ref(), update.display_name.as_ref());
     msg.push_str(&format!(
         "{} <b>{}</b> {}\n",
         event.icon(),
@@ -28,11 +30,13 @@ pub(crate) fn format_event_message(
     // Check if anyone is in voice
     if sessions.is_empty() {
         msg.push_str("\n💤 No one in voice");
+        format_achievements(&mut msg, achievements);
         msg.push_str("</blockquote>");
         return msg;
     }
 
     format_channels(&mut msg, sessions, tracked_channels, channel_names);
+    format_achievements(&mut msg, achievements);
 
     msg.push_str("</blockquote>");
     msg
@@ -43,6 +47,7 @@ pub(crate) fn format_status_message(
     sessions: &Sessions,
     tracked_channels: &[ChannelId],
     channel_names: &ChannelNames,
+    achievements: &[Achievement],
 ) -> String {
     let mut msg = String::from("<blockquote>");
 
@@ -53,6 +58,7 @@ pub(crate) fn format_status_message(
     }
 
     format_channels(&mut msg, sessions, tracked_channels, channel_names);
+    format_achievements(&mut msg, achievements);
 
     msg.push_str("</blockquote>");
     msg
@@ -95,10 +101,22 @@ fn format_channels(
             msg.push_str(&format!(
                 "• {} {} ({})\n",
                 emoji,
-                html_escape(&session.display_name),
+                html_escape(session.display_name.as_ref()),
                 duration,
             ));
         }
+    }
+}
+
+/// Renders achievements at the bottom of the message.
+fn format_achievements(msg: &mut String, achievements: &[Achievement]) {
+    for achievement in achievements {
+        msg.push_str(&format!(
+            "\n{} {} — {}!",
+            achievement.kind.emoji(),
+            html_escape(achievement.display_name.as_ref()),
+            achievement.kind.label(),
+        ));
     }
 }
 

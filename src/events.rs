@@ -49,9 +49,32 @@ impl AsRef<str> for ChannelName {
     }
 }
 
+/// Newtype wrapper for user display names (guild nickname or username fallback).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DisplayName(String);
+
+impl DisplayName {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+}
+
+impl fmt::Display for DisplayName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for DisplayName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
 pub struct ChannelUpdate {
     pub username: Username,
-    pub display_name: String,
+    pub display_name: DisplayName,
     pub channel_name: ChannelName,
     pub channel_id: ChannelId,
 }

@@ -1,15 +1,15 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use chrono_tz::Europe::Kyiv;
 use serde::{Deserialize, Serialize};
 use serenity::model::id::ChannelId;
 
-use crate::events::{ChannelName, Username};
+use crate::events::{ChannelName, DisplayName, Username};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionInfo {
-    pub display_name: String,
+    pub display_name: DisplayName,
     #[serde(serialize_with = "ser_channel_id", deserialize_with = "de_channel_id")]
     pub channel_id: ChannelId,
     pub joined_at: DateTime<Utc>,
@@ -41,6 +41,14 @@ impl Default for WeeklyStats {
     }
 }
 
+/// Tracks a recent channel leave for Boomerang/Channel hopper detection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RecentLeave {
+    #[serde(serialize_with = "ser_channel_id", deserialize_with = "de_channel_id")]
+    pub channel_id: ChannelId,
+    pub left_at: DateTime<Utc>,
+}
+
 /// Maps Discord channel IDs to their human-readable names.
 pub(crate) type ChannelNames = HashMap<ChannelId, ChannelName>;
 
@@ -53,6 +61,81 @@ pub(crate) fn current_week_start() -> NaiveDate {
 
 /// Active voice sessions keyed by username.
 pub(crate) type Sessions = HashMap<Username, SessionInfo>;
+
+/// Per-date set of achievements already shown (prevents repeats across ticks/restarts).
+pub(crate) type ShownAchievements = HashMap<NaiveDate, HashSet<ShownAchievement>>;
+
+/// Identifies a specific achievement shown to a specific user.
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ShownAchievement {
+    pub username: Username,
+    pub kind: AchievementKind,
+}
+
+/// All possible achievement types.
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) enum AchievementKind {
+    PartyStarter,
+    SpeedRun,
+    Boomerang,
+    ChannelHopper,
+    LastOneStanding,
+    DynamicDuo,
+    FullHouse,
+    NightOwl,
+    EarlyBird,
+    LunchBreak,
+    LateShift,
+    Marathon,
+    Overtime,
+    Melted,
+    LivingHere,
+}
+
+impl AchievementKind {
+    pub fn emoji(&self) -> &'static str {
+        match self {
+            Self::PartyStarter => "🎉",
+            Self::SpeedRun => "⚡",
+            Self::Boomerang => "🪃",
+            Self::ChannelHopper => "🔀",
+            Self::LastOneStanding => "👋",
+            Self::DynamicDuo => "🤝",
+            Self::FullHouse => "🔥",
+            Self::NightOwl => "🦉",
+            Self::EarlyBird => "🌅",
+            Self::LunchBreak => "🍽",
+            Self::LateShift => "🌙",
+            Self::Marathon => "🏃",
+            Self::Overtime => "⏰",
+            Self::Melted => "🫠",
+            Self::LivingHere => "💀",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::PartyStarter => "Party starter",
+            Self::SpeedRun => "Speed run",
+            Self::Boomerang => "Boomerang",
+            Self::ChannelHopper => "Channel hopper",
+            Self::LastOneStanding => "Last one standing",
+            Self::DynamicDuo => "Dynamic duo",
+            Self::FullHouse => "Full house",
+            Self::NightOwl => "Night owl",
+            Self::EarlyBird => "Early bird",
+            Self::LunchBreak => "Lunch break",
+            Self::LateShift => "Late shift",
+            Self::Marathon => "Marathon",
+            Self::Overtime => "Overtime",
+            Self::Melted => "Melted",
+            Self::LivingHere => "Living here",
+        }
+    }
+}
+
+/// Recent leaves keyed by username.
+pub(crate) type RecentLeaves = HashMap<Username, RecentLeave>;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(crate) struct PersistentState {
@@ -68,6 +151,10 @@ pub(crate) struct PersistentState {
         deserialize_with = "de_channel_names"
     )]
     pub channel_names: ChannelNames,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub shown_achievements: ShownAchievements,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub recent_leaves: RecentLeaves,
 }
 
 fn ser_channel_id<S: serde::Serializer>(id: &ChannelId, s: S) -> Result<S::Ok, S::Error> {

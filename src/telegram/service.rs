@@ -8,8 +8,12 @@ use teloxide_core::types::{ChatId, MessageId, ParseMode};
 
 use crate::events::VoiceEvent;
 
+use super::achievements::{cleanup_stale, detect_event_achievements, detect_tick_achievements};
 use super::format::{format_event_message, format_status_message};
-use super::state::{ChannelNames, PersistentState, SessionInfo, Sessions, WeeklyStats};
+use super::state::{
+    ChannelNames, PersistentState, RecentLeave, RecentLeaves, SessionInfo, Sessions,
+    ShownAchievements, WeeklyStats,
+};
 
 pub struct TelegramService {
     bot: Bot,
@@ -21,6 +25,8 @@ pub struct TelegramService {
     sessions: Sessions,
     weekly_stats: WeeklyStats,
     channel_names: ChannelNames,
+    shown_achievements: ShownAchievements,
+    recent_leaves: RecentLeaves,
     last_message_text: Option<String>,
 }
 
@@ -41,6 +47,8 @@ impl TelegramService {
             sessions: Sessions::new(),
             weekly_stats: WeeklyStats::default(),
             channel_names: ChannelNames::new(),
+            shown_achievements: ShownAchievements::new(),
+            recent_leaves: RecentLeaves::new(),
             last_message_text: None,
         };
         svc.load_state().await?;
@@ -64,7 +72,15 @@ impl TelegramService {
         self.channel_names
             .insert(update.channel_id, update.channel_name.clone());
 
-        self.update_sessions(event);
+        // Capture pre-update channel member count (for Party starter detection)
+        let pre_channel_count = self
+            .sessions
+            .values()
+            .filter(|s| s.channel_id == update.channel_id)
+            .count();
+
+        // Update sessions, capture removed session for Speed run detection
+        let removed_session = self.update_sessions(event);
 
         // Don't send messages for initial state — just populate sessions
         if event.is_initial_state() {
@@ -76,12 +92,22 @@ impl TelegramService {
             return Ok(());
         }
 
+        // Detect achievements
+        let achievements = detect_event_achievements(
+            event,
+            &self.sessions,
+            &self.recent_leaves,
+            pre_channel_count,
+            removed_session.as_ref(),
+        );
+
         // Format combined message
         let message = format_event_message(
             event,
             &self.sessions,
             &self.tracked_channels,
             &self.channel_names,
+            &achievements,
         );
 
         // Delete old message, send new one (keeps it at bottom of chat)
@@ -100,14 +126,24 @@ impl TelegramService {
     }
 
     pub async fn handle_tick(&mut self) -> Result<()> {
+        // Clean stale data
+        cleanup_stale(&mut self.shown_achievements, &mut self.recent_leaves);
+
         // Nothing to update if no one is in voice or no message exists
         let msg_id = match self.message_id {
             Some(id) if !self.sessions.is_empty() => id,
             _ => return Ok(()),
         };
 
-        let message =
-            format_status_message(&self.sessions, &self.tracked_channels, &self.channel_names);
+        // Detect tick achievements
+        let achievements = detect_tick_achievements(&self.sessions, &mut self.shown_achievements);
+
+        let message = format_status_message(
+            &self.sessions,
+            &self.tracked_channels,
+            &self.channel_names,
+            &achievements,
+        );
 
         // Skip edit if content hasn't changed
         if self.last_message_text.as_deref() == Some(&message) {
@@ -119,10 +155,16 @@ impl TelegramService {
         self.edit_message(msg_id, &message).await?;
         self.last_message_text = Some(message);
 
+        // Persist if achievements were detected (shown_achievements changed)
+        if !achievements.is_empty() {
+            self.persist_state().await?;
+        }
+
         Ok(())
     }
 
-    fn update_sessions(&mut self, event: &VoiceEvent) {
+    /// Updates sessions and returns the removed session (if any, on Leave).
+    fn update_sessions(&mut self, event: &VoiceEvent) -> Option<SessionInfo> {
         match event {
             VoiceEvent::Joined(u) | VoiceEvent::InitialState(u) => {
                 self.sessions.insert(
@@ -133,12 +175,24 @@ impl TelegramService {
                         joined_at: Utc::now(),
                     },
                 );
+                None
             }
             VoiceEvent::Left(u) => {
-                if let Some(session) = self.sessions.remove(&u.username) {
+                let removed = self.sessions.remove(&u.username);
+                if let Some(ref session) = removed {
                     let duration_secs = (Utc::now() - session.joined_at).num_seconds();
+
+                    // Track recent leave for Boomerang/Channel hopper
+                    self.recent_leaves.insert(
+                        u.username.clone(),
+                        RecentLeave {
+                            channel_id: u.channel_id,
+                            left_at: Utc::now(),
+                        },
+                    );
+
                     if duration_secs <= 0 {
-                        return;
+                        return removed;
                     }
 
                     let user_stats = self
@@ -155,6 +209,7 @@ impl TelegramService {
                         "accumulated voice time"
                     );
                 }
+                removed
             }
         }
     }
@@ -244,6 +299,8 @@ impl TelegramService {
             self.sessions = state.sessions;
             self.weekly_stats = state.weekly_stats.unwrap_or_default();
             self.channel_names = state.channel_names;
+            self.shown_achievements = state.shown_achievements;
+            self.recent_leaves = state.recent_leaves;
 
             tracing::info!(
                 state_msg_id = pinned.id.0,
@@ -307,6 +364,8 @@ impl TelegramService {
             sessions: self.sessions.clone(),
             weekly_stats: Some(self.weekly_stats.clone()),
             channel_names: self.channel_names.clone(),
+            shown_achievements: self.shown_achievements.clone(),
+            recent_leaves: self.recent_leaves.clone(),
         };
         let text = serde_json::to_string(&state).unwrap_or_else(|_| "{}".to_owned());
 

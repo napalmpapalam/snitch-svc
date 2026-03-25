@@ -1,3 +1,4 @@
+mod achievements;
 mod format;
 mod service;
 mod state;

@@ -6,7 +6,7 @@ use serenity::prelude::{Context, EventHandler};
 use tokio::sync::mpsc;
 
 use crate::config::DiscordConfig;
-use crate::events::{ChannelName, ChannelUpdate, Username, VoiceEvent};
+use crate::events::{ChannelName, ChannelUpdate, DisplayName, Username, VoiceEvent};
 
 pub struct Handler {
     pub config: DiscordConfig,
@@ -128,23 +128,19 @@ fn resolve_display_names(
     ctx: &Context,
     guild_id: GuildId,
     voice_state: &VoiceState,
-) -> (Username, String) {
+) -> (Username, DisplayName) {
     ctx.cache
         .guild(guild_id)
         .and_then(|guild| {
             guild.members.get(&voice_state.user_id).map(|member| {
                 let username = Username::new(&member.user.name);
-                let display = member
-                    .nick
-                    .as_deref()
-                    .unwrap_or(&member.user.name)
-                    .to_owned();
-                (username, display)
+                let display = member.nick.as_deref().unwrap_or(&member.user.name);
+                (username, DisplayName::new(display))
             })
         })
         .unwrap_or_else(|| {
             let id = voice_state.user_id.to_string();
-            (Username::new(&id), id)
+            (Username::new(&id), DisplayName::new(&id))
         })
 }
 
@@ -152,22 +148,18 @@ fn resolve_display_names(
 fn resolve_display_names_from_guild(
     guild: &serenity::model::guild::Guild,
     user_id: UserId,
-) -> (Username, String) {
+) -> (Username, DisplayName) {
     guild
         .members
         .get(&user_id)
         .map(|member| {
             let username = Username::new(&member.user.name);
-            let display = member
-                .nick
-                .as_deref()
-                .unwrap_or(&member.user.name)
-                .to_owned();
-            (username, display)
+            let display = member.nick.as_deref().unwrap_or(&member.user.name);
+            (username, DisplayName::new(display))
         })
         .unwrap_or_else(|| {
             let id = user_id.to_string();
-            (Username::new(&id), id)
+            (Username::new(&id), DisplayName::new(&id))
         })
 }
 
@@ -176,7 +168,7 @@ fn build_channel_update(
     guild_id: GuildId,
     channel_id: ChannelId,
     username: &Username,
-    display_name: &str,
+    display_name: &DisplayName,
 ) -> ChannelUpdate {
     let channel_name = ctx
         .cache
@@ -190,7 +182,7 @@ fn build_channel_update(
 
     ChannelUpdate {
         username: username.clone(),
-        display_name: display_name.to_owned(),
+        display_name: display_name.clone(),
         channel_name,
         channel_id,
     }
