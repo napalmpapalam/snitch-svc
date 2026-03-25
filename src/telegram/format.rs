@@ -32,9 +32,41 @@ pub(crate) fn format_event_message(
         return msg;
     }
 
+    format_channels(&mut msg, sessions, tracked_channels, channel_names);
+
+    msg.push_str("</blockquote>");
+    msg
+}
+
+/// Formats a status message (no action line) for duration tick updates.
+pub(crate) fn format_status_message(
+    sessions: &Sessions,
+    tracked_channels: &[ChannelId],
+    channel_names: &ChannelNames,
+) -> String {
+    let mut msg = String::from("<blockquote>");
+
+    if sessions.is_empty() {
+        msg.push_str("💤 No one in voice");
+        msg.push_str("</blockquote>");
+        return msg;
+    }
+
+    format_channels(&mut msg, sessions, tracked_channels, channel_names);
+
+    msg.push_str("</blockquote>");
+    msg
+}
+
+/// Renders channel listings with members and durations into the message buffer.
+fn format_channels(
+    msg: &mut String,
+    sessions: &Sessions,
+    tracked_channels: &[ChannelId],
+    channel_names: &ChannelNames,
+) {
     let now = Utc::now();
 
-    // Render each tracked channel that has members
     for &channel_id in tracked_channels {
         let channel_members: Vec<_> = sessions
             .iter()
@@ -68,9 +100,6 @@ pub(crate) fn format_event_message(
             ));
         }
     }
-
-    msg.push_str("</blockquote>");
-    msg
 }
 
 /// Formats a time delta into a human-readable duration string.

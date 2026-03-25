@@ -2,16 +2,16 @@ use chrono::Utc;
 use eyre::{Result, WrapErr};
 use serenity::model::id::ChannelId;
 use teloxide_core::Bot;
-use teloxide_core::payloads::SendMessageSetters;
+use teloxide_core::payloads::{EditMessageTextSetters, SendMessageSetters};
 use teloxide_core::prelude::Requester;
 use teloxide_core::types::{ChatId, MessageId, ParseMode};
 
 use crate::events::VoiceEvent;
 
-use super::format::format_event_message;
+use super::format::{format_event_message, format_status_message};
 use super::state::{ChannelNames, PersistentState, SessionInfo, Sessions, WeeklyStats};
 
-pub struct Notifier {
+pub struct TelegramService {
     bot: Bot,
     chat_id: ChatId,
     state_chat_id: ChatId,
@@ -21,16 +21,17 @@ pub struct Notifier {
     sessions: Sessions,
     weekly_stats: WeeklyStats,
     channel_names: ChannelNames,
+    last_message_text: Option<String>,
 }
 
-impl Notifier {
+impl TelegramService {
     pub async fn new(
         bot: Bot,
         chat_id: ChatId,
         state_chat_id: ChatId,
         tracked_channels: Vec<ChannelId>,
     ) -> Result<Self> {
-        let mut notifier = Self {
+        let mut svc = Self {
             bot,
             chat_id,
             state_chat_id,
@@ -40,9 +41,10 @@ impl Notifier {
             sessions: Sessions::new(),
             weekly_stats: WeeklyStats::default(),
             channel_names: ChannelNames::new(),
+            last_message_text: None,
         };
-        notifier.load_state().await?;
-        Ok(notifier)
+        svc.load_state().await?;
+        Ok(svc)
     }
 
     pub async fn handle_event(&mut self, event: &VoiceEvent) -> Result<()> {
@@ -89,9 +91,33 @@ impl Notifier {
 
         if let Some(msg_id) = self.send_message(&message).await? {
             self.message_id = Some(msg_id);
+            self.last_message_text = Some(message);
         }
 
         self.persist_state().await?;
+
+        Ok(())
+    }
+
+    pub async fn handle_tick(&mut self) -> Result<()> {
+        // Nothing to update if no one is in voice or no message exists
+        let msg_id = match self.message_id {
+            Some(id) if !self.sessions.is_empty() => id,
+            _ => return Ok(()),
+        };
+
+        let message =
+            format_status_message(&self.sessions, &self.tracked_channels, &self.channel_names);
+
+        // Skip edit if content hasn't changed
+        if self.last_message_text.as_deref() == Some(&message) {
+            return Ok(());
+        }
+
+        tracing::debug!("duration tick: updating message");
+
+        self.edit_message(msg_id, &message).await?;
+        self.last_message_text = Some(message);
 
         Ok(())
     }
@@ -150,6 +176,33 @@ impl Notifier {
                 Ok(None)
             }
         }
+    }
+
+    async fn edit_message(&self, message_id: MessageId, text: &str) -> Result<()> {
+        tracing::debug!(chat_id = %self.chat_id, msg_id = message_id.0, "editing telegram message");
+        match self
+            .bot
+            .edit_message_text(self.chat_id, message_id, text)
+            .parse_mode(ParseMode::Html)
+            .await
+        {
+            Ok(_) => {
+                tracing::debug!(
+                    chat_id = %self.chat_id,
+                    msg_id = message_id.0,
+                    "edited telegram message"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    chat_id = %self.chat_id,
+                    msg_id = message_id.0,
+                    %err,
+                    "failed to edit telegram message"
+                );
+            }
+        }
+        Ok(())
     }
 
     async fn delete_message(&self, message_id: MessageId) {
