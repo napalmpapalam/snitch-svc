@@ -43,13 +43,7 @@ async fn main() -> Result<()> {
 
     let config = Config::load()?;
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(config.log.level.into())
-                .from_env_lossy(),
-        )
-        .init();
+    init_logging(&config.log);
 
     match cli.command {
         Command::Run {
@@ -58,6 +52,22 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn init_logging(log_config: &config::LogConfig) {
+    let mut filter = EnvFilter::builder()
+        .with_default_directive(log_config.level.into())
+        .from_env_lossy();
+
+    for directive in &log_config.filter {
+        if let Ok(d) = directive.parse() {
+            filter = filter.add_directive(d);
+        } else {
+            eprintln!("invalid log filter directive: '{directive}'");
+        }
+    }
+
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
 async fn run_service(config: Config) -> Result<()> {

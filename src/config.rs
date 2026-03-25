@@ -18,6 +18,8 @@ pub struct Config {
 pub struct LogConfig {
     #[serde(deserialize_with = "deserialize_level_filter")]
     pub level: LevelFilter,
+    #[serde(default)]
+    pub filter: Vec<String>,
 }
 
 #[allow(dead_code)]

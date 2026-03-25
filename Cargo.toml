@@ -13,7 +13,7 @@ eyre = "0.6"
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_yaml = "0.9"
-serenity = { version = "0.12", default-features = false, features = ["model", "rustls_backend"] }
+serenity = { version = "0.12", default-features = false, features = ["model", "rustls_backend", "gateway", "cache", "client"] }
 teloxide-core = { version = "0.13", default-features = false }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "signal"] }
 tokio-util = { version = "0.7", default-features = false }

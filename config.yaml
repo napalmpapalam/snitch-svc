@@ -1,5 +1,8 @@
 log:
-  level: debug
+  level: info
+  filter:
+    - "hyper_util=warn"
+    - "serenity=warn"
 
 telegram:
   chat_id: -1002395411796
