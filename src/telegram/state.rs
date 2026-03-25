@@ -155,6 +155,8 @@ pub(crate) struct PersistentState {
     pub shown_achievements: ShownAchievements,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub recent_leaves: RecentLeaves,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_digest_sent: Option<NaiveDate>,
 }
 
 fn ser_channel_id<S: serde::Serializer>(id: &ChannelId, s: S) -> Result<S::Ok, S::Error> {

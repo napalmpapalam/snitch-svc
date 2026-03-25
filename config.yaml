@@ -12,7 +12,7 @@ log:
 telegram:
   chat_id: -1002395411796
   state_chat_id: -1003690216546
-  duration_tick_minutes: 2
+  duration_tick_minutes: 5
 
 discord:
   target_guild_id: "1257044413302046853"

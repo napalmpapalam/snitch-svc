@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
-use chrono::Utc;
+use chrono::{Datelike, NaiveDate, Timelike, Utc};
+use chrono_tz::Europe::Kyiv;
 use eyre::{Result, WrapErr};
 use serenity::model::id::ChannelId;
 use teloxide_core::Bot;
@@ -11,7 +12,8 @@ use teloxide_core::types::{ChatId, MessageId, ParseMode};
 use crate::events::{Username, VoiceEvent};
 
 use super::achievements::{cleanup_stale, detect_event_achievements, detect_tick_achievements};
-use super::format::{format_event_message, format_status_message};
+use super::format::{format_digest, format_event_message, format_status_message};
+use super::state::current_week_start;
 use super::state::{
     ChannelNames, PersistentState, RecentLeave, RecentLeaves, SessionInfo, Sessions,
     ShownAchievements, WeeklyStats,
@@ -29,6 +31,7 @@ pub struct TelegramService {
     channel_names: ChannelNames,
     shown_achievements: ShownAchievements,
     recent_leaves: RecentLeaves,
+    last_digest_sent: Option<NaiveDate>,
     last_message_text: Option<String>,
     /// Users seen in InitialState events (transient, for reconciliation).
     initial_state_users: HashSet<Username>,
@@ -55,6 +58,7 @@ impl TelegramService {
             channel_names: ChannelNames::new(),
             shown_achievements: ShownAchievements::new(),
             recent_leaves: RecentLeaves::new(),
+            last_digest_sent: None,
             last_message_text: None,
             initial_state_users: HashSet::new(),
             initial_state_done: false,
@@ -143,36 +147,79 @@ impl TelegramService {
         // Clean stale data
         cleanup_stale(&mut self.shown_achievements, &mut self.recent_leaves);
 
-        // Nothing to update if no one is in voice or no message exists
-        let msg_id = match self.message_id {
-            Some(id) if !self.sessions.is_empty() => id,
-            _ => return Ok(()),
-        };
+        // Check weekly digest trigger
+        self.check_weekly_digest().await?;
 
-        // Detect tick achievements
-        let achievements = detect_tick_achievements(&self.sessions, &mut self.shown_achievements);
+        // Update status message if anyone is in voice
+        if let Some(msg_id) = self.message_id
+            && !self.sessions.is_empty()
+        {
+            let achievements =
+                detect_tick_achievements(&self.sessions, &mut self.shown_achievements);
 
-        let message = format_status_message(
-            &self.sessions,
-            &self.tracked_channels,
-            &self.channel_names,
-            &achievements,
-        );
+            let message = format_status_message(
+                &self.sessions,
+                &self.tracked_channels,
+                &self.channel_names,
+                &achievements,
+            );
 
-        // Skip edit if content hasn't changed
-        if self.last_message_text.as_deref() == Some(&message) {
+            // Skip edit if content hasn't changed
+            if self.last_message_text.as_deref() != Some(&message) {
+                tracing::debug!("duration tick: updating message");
+                self.edit_message(msg_id, &message).await?;
+                self.last_message_text = Some(message);
+            }
+
+            if !achievements.is_empty() {
+                self.persist_state().await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn check_weekly_digest(&mut self) -> Result<()> {
+        let now_kyiv = Utc::now().with_timezone(&Kyiv);
+        let today = now_kyiv.date_naive();
+
+        // Must be Monday, 9:00+ Kyiv time
+        if now_kyiv.weekday() != chrono::Weekday::Mon || now_kyiv.hour() < 9 {
             return Ok(());
         }
 
-        tracing::debug!("duration tick: updating message");
-
-        self.edit_message(msg_id, &message).await?;
-        self.last_message_text = Some(message);
-
-        // Persist if achievements were detected (shown_achievements changed)
-        if !achievements.is_empty() {
-            self.persist_state().await?;
+        // Already sent today
+        if self.last_digest_sent == Some(today) {
+            return Ok(());
         }
+
+        // Nobody had voice time
+        let has_activity = self
+            .weekly_stats
+            .users
+            .values()
+            .any(|s| s.total_seconds > 0);
+        if !has_activity {
+            return Ok(());
+        }
+
+        let week_start = self.weekly_stats.week_start;
+        let week_end = week_start + chrono::Duration::days(6);
+
+        let message = format_digest(&self.weekly_stats, week_start, week_end);
+
+        tracing::info!("sending weekly digest");
+        self.send_message(&message).await?;
+
+        // Rotate stats: total → prev, reset totals
+        for user_stats in self.weekly_stats.users.values_mut() {
+            user_stats.prev_week_seconds = user_stats.total_seconds;
+            user_stats.total_seconds = 0;
+        }
+        self.weekly_stats.week_start = current_week_start();
+        self.last_digest_sent = Some(today);
+
+        self.persist_state().await?;
 
         Ok(())
     }
@@ -363,6 +410,7 @@ impl TelegramService {
             self.channel_names = state.channel_names;
             self.shown_achievements = state.shown_achievements;
             self.recent_leaves = state.recent_leaves;
+            self.last_digest_sent = state.last_digest_sent;
 
             tracing::info!(
                 state_msg_id = pinned.id.0,
@@ -428,6 +476,7 @@ impl TelegramService {
             channel_names: self.channel_names.clone(),
             shown_achievements: self.shown_achievements.clone(),
             recent_leaves: self.recent_leaves.clone(),
+            last_digest_sent: self.last_digest_sent,
         };
         let text = serde_json::to_string(&state).unwrap_or_else(|_| "{}".to_owned());
 

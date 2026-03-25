@@ -1,11 +1,11 @@
-use chrono::{TimeDelta, Utc};
+use chrono::{NaiveDate, TimeDelta, Utc};
 use serenity::model::id::ChannelId;
 
 use crate::emoji;
 use crate::events::VoiceEvent;
 
 use super::achievements::Achievement;
-use super::state::{ChannelNames, Sessions};
+use super::state::{ChannelNames, Sessions, WeeklyStats};
 
 /// Formats a combined message for a voice event (join/leave) showing all active channels.
 pub(crate) fn format_event_message(
@@ -143,6 +143,61 @@ pub(crate) fn format_duration(delta: TimeDelta) -> String {
     } else {
         format!("{minutes}m")
     }
+}
+
+/// Formats seconds into a human-readable duration (for weekly stats where we have raw seconds).
+fn format_duration_secs(seconds: i64) -> String {
+    format_duration(TimeDelta::seconds(seconds))
+}
+
+/// Formats the weekly digest leaderboard message.
+pub(crate) fn format_digest(
+    stats: &WeeklyStats,
+    week_start: NaiveDate,
+    week_end: NaiveDate,
+) -> String {
+    let mut msg = String::from("<blockquote>");
+    msg.push_str("📊 <b>Weekly Voice Stats</b>\n");
+    msg.push_str(&format!(
+        "📅 {} — {}\n",
+        week_start.format("%b %d"),
+        week_end.format("%b %d"),
+    ));
+
+    // Sort users by total_seconds descending
+    let mut leaderboard: Vec<_> = stats
+        .users
+        .iter()
+        .filter(|(_, s)| s.total_seconds > 0)
+        .collect();
+    leaderboard.sort_by(|a, b| b.1.total_seconds.cmp(&a.1.total_seconds));
+
+    if leaderboard.is_empty() {
+        msg.push_str("\n💤 No voice activity this week");
+        msg.push_str("</blockquote>");
+        return msg;
+    }
+
+    msg.push_str("\n👑 <b>Voice King:</b>\n");
+
+    let medals = ["🥇", "🥈", "🥉"];
+    for (i, (username, user_stats)) in leaderboard.iter().enumerate() {
+        let duration = format_duration_secs(user_stats.total_seconds);
+        let prefix = if i < medals.len() {
+            medals[i].to_owned()
+        } else {
+            format!("{}.", i + 1)
+        };
+        msg.push_str(&format!(
+            "{} {} — {}\n",
+            prefix,
+            html_escape(username.as_ref()),
+            duration,
+        ));
+    }
+
+    msg.push_str("</blockquote>");
+    msg
 }
 
 fn format_display_name(username: &str, display_name: &str) -> String {
