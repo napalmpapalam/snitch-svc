@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "native"
+          cache-all-crates: true
+
+      - name: cargo:fmt
+        run: cargo fmt -- --check
+
+      - name: cargo:clippy
+        run: cargo clippy --locked --tests -- -D warnings
+
+      - name: Cancel workflow on failure
+        if: failure()
+        uses: andymckay/cancel-action@0.5
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "test"
+          cache-all-crates: true
+
+      - name: cargo:test
+        run: cargo test --locked
+
+      - name: Cancel workflow on failure
+        if: failure()
+        uses: andymckay/cancel-action@0.5
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "native"
+          cache-all-crates: true
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Cancel workflow on failure
+        if: failure()
+        uses: andymckay/cancel-action@0.5
