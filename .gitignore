@@ -33,3 +33,9 @@ snitch-svc
  .idea/
  .vscode/
 golang
+
+
+# Added by cargo
+
+/target
+docs
