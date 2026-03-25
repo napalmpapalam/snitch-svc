@@ -1628,6 +1628,7 @@ dependencies = [
  "serenity",
  "teloxide-core",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

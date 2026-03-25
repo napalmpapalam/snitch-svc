@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::path::Path;
 
 use eyre::{Result, WrapErr};
@@ -22,6 +20,7 @@ pub struct LogConfig {
     pub level: LevelFilter,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct TelegramConfig {
     pub chat_id: ChatId,
@@ -30,6 +29,7 @@ pub struct TelegramConfig {
     pub token: SecretString,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct DiscordConfig {
     #[serde(deserialize_with = "deserialize_guild_id")]

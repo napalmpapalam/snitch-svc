@@ -16,5 +16,6 @@ serde_yaml = "0.9"
 serenity = { version = "0.12", default-features = false, features = ["model", "rustls_backend"] }
 teloxide-core = { version = "0.13", default-features = false }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "signal"] }
+tokio-util = { version = "0.7", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "ansi"] }
