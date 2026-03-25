@@ -3,6 +3,7 @@ log:
   filter:
     - "hyper_util=warn"
     - "serenity=warn"
+    - "snitch::telegram::notifier=debug"
 
 telegram:
   chat_id: -1002395411796

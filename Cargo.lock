@@ -1729,8 +1729,10 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "eyre",
+ "rand 0.8.5",
  "secrecy 0.10.3",
  "serde",
+ "serde_json",
  "serde_yaml",
  "serenity",
  "teloxide-core",

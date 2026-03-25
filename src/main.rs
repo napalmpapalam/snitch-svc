@@ -1,5 +1,6 @@
 mod config;
 mod discord;
+mod emoji;
 mod events;
 mod telegram;
 
@@ -24,6 +25,9 @@ struct Cli {
 enum Command {
     /// Start the service
     Run {
+        /// Log notifications instead of sending to Telegram
+        #[arg(long)]
+        dry_run: bool,
         #[command(subcommand)]
         service: Service,
     },
@@ -47,8 +51,9 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Run {
+            dry_run,
             service: Service::All | Service::Snitch,
-        } => run_service(config).await?,
+        } => run_service(config, dry_run).await?,
     }
 
     Ok(())
@@ -70,29 +75,44 @@ fn init_logging(log_config: &config::LogConfig) {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
-async fn run_service(config: Config) -> Result<()> {
-    tracing::info!("starting snitch service");
+async fn run_service(config: Config, dry_run: bool) -> Result<()> {
+    tracing::info!(dry_run, "starting snitch service");
     tracing::debug!(?config, "loaded configuration");
 
     let (tx, rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
     let cancel = CancellationToken::new();
 
-    let discord_handle = tokio::spawn(discord::run(config.discord, tx, cancel.clone()));
-    let telegram_handle = tokio::spawn(telegram::run(config.telegram, rx));
+    let mut discord_handle = tokio::spawn(discord::run(config.discord, tx, cancel.clone()));
+    let mut telegram_handle = tokio::spawn(telegram::run(config.telegram, rx, dry_run));
 
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("received shutdown signal");
+    // Wait for shutdown signal or early task failure
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("received shutdown signal");
+        }
+        result = &mut discord_handle => {
+            match result {
+                Ok(Err(err)) => tracing::error!(%err, "discord task crashed"),
+                Err(err) => tracing::error!(%err, "discord task panicked"),
+                Ok(Ok(())) => tracing::warn!("discord task exited unexpectedly"),
+            }
+        }
+        result = &mut telegram_handle => {
+            match result {
+                Ok(Err(err)) => tracing::error!(%err, "telegram task crashed"),
+                Err(err) => tracing::error!(%err, "telegram task panicked"),
+                Ok(Ok(())) => tracing::warn!("telegram task exited unexpectedly"),
+            }
+        }
+    }
 
     // Signal the discord task to shut down gracefully;
     // it drops the sender, closing the channel so the telegram task drains and exits
     cancel.cancel();
 
-    if let Err(err) = discord_handle.await? {
-        tracing::error!(%err, "discord task failed");
-    }
-    if let Err(err) = telegram_handle.await? {
-        tracing::error!(%err, "telegram task failed");
-    }
+    // Wait for remaining tasks (ignore errors — already logged above)
+    let _ = discord_handle.await;
+    let _ = telegram_handle.await;
 
     tracing::info!("shutdown complete");
     Ok(())

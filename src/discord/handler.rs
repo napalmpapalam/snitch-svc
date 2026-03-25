@@ -37,14 +37,20 @@ impl EventHandler for Handler {
             return;
         }
 
-        let user_name = resolve_user_name(&ctx, self.config.target_guild_id, &new);
+        let (username, display_name) =
+            resolve_display_names(&ctx, self.config.target_guild_id, &new);
 
         // Left old channel
         if let Some(channel_id) = old_channel
             && self.is_tracked(channel_id)
         {
-            let update =
-                build_channel_update(&ctx, self.config.target_guild_id, channel_id, &user_name);
+            let update = build_channel_update(
+                &ctx,
+                self.config.target_guild_id,
+                channel_id,
+                &username,
+                &display_name,
+            );
             self.send_event(VoiceEvent::Left(update)).await;
         }
 
@@ -52,8 +58,13 @@ impl EventHandler for Handler {
         if let Some(channel_id) = new_channel
             && self.is_tracked(channel_id)
         {
-            let update =
-                build_channel_update(&ctx, self.config.target_guild_id, channel_id, &user_name);
+            let update = build_channel_update(
+                &ctx,
+                self.config.target_guild_id,
+                channel_id,
+                &username,
+                &display_name,
+            );
             self.send_event(VoiceEvent::Joined(update)).await;
         }
     }
@@ -104,21 +115,36 @@ impl Handler {
             );
 
             let update = ChannelUpdate {
-                user_name: String::new(),
+                username: String::new(),
+                display_name: String::new(),
                 channel_name,
                 channel_id,
                 members,
             };
-            self.send_event(VoiceEvent::Joined(update)).await;
+            self.send_event(VoiceEvent::InitialState(update)).await;
         }
     }
 }
 
-fn resolve_user_name(ctx: &Context, guild_id: GuildId, voice_state: &VoiceState) -> String {
+/// Returns (raw_username, display_name)
+fn resolve_display_names(
+    ctx: &Context,
+    guild_id: GuildId,
+    voice_state: &VoiceState,
+) -> (String, String) {
     ctx.cache
         .guild(guild_id)
-        .map(|guild| resolve_member_name(&guild, voice_state.user_id))
-        .unwrap_or_else(|| voice_state.user_id.to_string())
+        .and_then(|guild| {
+            guild.members.get(&voice_state.user_id).map(|member| {
+                let username = member.user.name.clone();
+                let display = member.nick.as_deref().unwrap_or(&username).to_owned();
+                (username, display)
+            })
+        })
+        .unwrap_or_else(|| {
+            let id = voice_state.user_id.to_string();
+            (id.clone(), id)
+        })
 }
 
 fn resolve_member_name(
@@ -142,7 +168,8 @@ fn build_channel_update(
     ctx: &Context,
     guild_id: GuildId,
     channel_id: ChannelId,
-    user_name: &str,
+    username: &str,
+    display_name: &str,
 ) -> ChannelUpdate {
     let guild = ctx.cache.guild(guild_id);
 
@@ -164,7 +191,8 @@ fn build_channel_update(
         .unwrap_or_default();
 
     ChannelUpdate {
-        user_name: user_name.to_owned(),
+        username: username.to_owned(),
+        display_name: display_name.to_owned(),
         channel_name,
         channel_id,
         members,
