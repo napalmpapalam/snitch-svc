@@ -1,7 +1,5 @@
 use rand::Rng;
 
-const SPECIAL_EMOJI: &str = "💩";
-
 const EMOJI_POOL: &[&str] = &[
     "🎮", "🎯", "🎪", "🎨", "🎭", "🎰", "🎲", "🎸", "🎺", "🎻", "🎹", "🥁", "🎧", "🎤", "🎬", "🎳",
     "🎱", "🦄", "🦋", "🐉", "🦅", "🦉", "🦜", "🦩", "🦚", "🐆", "🦓", "🦒", "🦔", "🦦", "🦥", "🐼",
@@ -13,11 +11,7 @@ const EMOJI_POOL: &[&str] = &[
     "🎰", "🎲", "🧩", "🧸", "❤️", "🧡", "💛", "💚", "💙", "💜",
 ];
 
-pub fn for_user(username: &str) -> &'static str {
-    if username == "rilein1" {
-        return SPECIAL_EMOJI;
-    }
-
+pub fn random() -> &'static str {
     let idx = rand::thread_rng().gen_range(0..EMOJI_POOL.len());
     EMOJI_POOL[idx]
 }

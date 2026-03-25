@@ -7,25 +7,36 @@ use teloxide_core::payloads::SendMessageSetters;
 use teloxide_core::prelude::Requester;
 use teloxide_core::types::{ChatId, MessageId, ParseMode};
 
-use crate::emoji;
-use crate::events::{MemberInfo, VoiceEvent};
+use crate::events::VoiceEvent;
+
+use super::format::format_event_message;
+use super::state::{PersistentState, SessionInfo};
 
 pub struct Notifier {
     bot: Bot,
     chat_id: ChatId,
     state_chat_id: ChatId,
+    tracked_channels: Vec<ChannelId>,
     state_message_id: Option<MessageId>,
-    message_cache: HashMap<ChannelId, MessageId>,
+    message_id: Option<MessageId>,
+    sessions: HashMap<String, SessionInfo>,
 }
 
 impl Notifier {
-    pub async fn new(bot: Bot, chat_id: ChatId, state_chat_id: ChatId) -> Result<Self> {
+    pub async fn new(
+        bot: Bot,
+        chat_id: ChatId,
+        state_chat_id: ChatId,
+        tracked_channels: Vec<ChannelId>,
+    ) -> Result<Self> {
         let mut notifier = Self {
             bot,
             chat_id,
             state_chat_id,
+            tracked_channels,
             state_message_id: None,
-            message_cache: HashMap::new(),
+            message_id: None,
+            sessions: HashMap::new(),
         };
         notifier.load_state().await?;
         Ok(notifier)
@@ -44,44 +55,53 @@ impl Notifier {
             "voice event"
         );
 
-        // Skip initial state entirely — only send on actual join/leave
+        // Update sessions
+        match event {
+            VoiceEvent::Joined(u) | VoiceEvent::InitialState(u) => {
+                self.sessions.insert(
+                    u.username.clone(),
+                    SessionInfo {
+                        display_name: u.display_name.clone(),
+                        channel_id: u.channel_id,
+                    },
+                );
+            }
+            VoiceEvent::Left(u) => {
+                self.sessions.remove(&u.username);
+            }
+        }
+
+        // Don't send messages for initial state — just populate sessions
         if event.is_initial_state() {
-            tracing::debug!(channel_id = %update.channel_id, "skipping initial state");
+            tracing::debug!(
+                username = %update.username,
+                channel_id = %update.channel_id,
+                "populated session from initial state"
+            );
             return Ok(());
         }
 
-        let message = format_notification(event);
+        // Format combined message
+        let message = format_event_message(event, &self.sessions, &self.tracked_channels);
 
-        // Delete old message for this channel
-        if let Some(old_msg_id) = self.message_cache.remove(&update.channel_id) {
-            tracing::debug!(
-                channel_id = %update.channel_id,
-                old_msg_id = old_msg_id.0,
-                "deleting old notification"
-            );
+        // Delete old message, send new one (keeps it at bottom of chat)
+        if let Some(old_msg_id) = self.message_id.take() {
             self.delete_message(old_msg_id).await;
         }
 
-        // Send new message
         if let Some(msg_id) = self.send_message(&message).await? {
-            tracing::debug!(
-                channel_id = %update.channel_id,
-                msg_id = msg_id.0,
-                "stored new message in cache"
-            );
-            self.message_cache.insert(update.channel_id, msg_id);
+            self.message_id = Some(msg_id);
         }
 
-        // Persist state
         self.persist_state().await?;
 
         Ok(())
     }
 
     async fn send_message(&self, text: &str) -> Result<Option<MessageId>> {
-        let bot = &self.bot;
         tracing::debug!(chat_id = %self.chat_id, "sending telegram message");
-        match bot
+        match self
+            .bot
             .send_message(self.chat_id, text)
             .parse_mode(ParseMode::Html)
             .await
@@ -98,8 +118,7 @@ impl Notifier {
     }
 
     async fn delete_message(&self, message_id: MessageId) {
-        let bot = &self.bot;
-        match bot.delete_message(self.chat_id, message_id).await {
+        match self.bot.delete_message(self.chat_id, message_id).await {
             Ok(_) => {
                 tracing::debug!(
                     chat_id = %self.chat_id,
@@ -119,11 +138,10 @@ impl Notifier {
     }
 
     async fn load_state(&mut self) -> Result<()> {
-        let bot = &self.bot;
-
         tracing::info!(state_chat_id = %self.state_chat_id, "loading state from telegram");
 
-        let chat = bot
+        let chat = self
+            .bot
             .get_chat(self.state_chat_id)
             .await
             .wrap_err_with(|| format!("failed to get state chat {}", self.state_chat_id))?;
@@ -132,11 +150,14 @@ impl Notifier {
             self.state_message_id = Some(pinned.id);
 
             let text = pinned.text().unwrap_or("{}");
-            self.message_cache = parse_state(text);
+            let state: PersistentState = serde_json::from_str(text).unwrap_or_default();
+
+            self.message_id = state.message_id.map(MessageId);
+            self.sessions = state.sessions;
 
             tracing::info!(
                 state_msg_id = pinned.id.0,
-                channels = self.message_cache.len(),
+                sessions = self.sessions.len(),
                 state = %text,
                 "loaded state from pinned message"
             );
@@ -146,7 +167,8 @@ impl Notifier {
                 "no pinned message found, initializing state"
             );
 
-            let msg = bot
+            let msg = self
+                .bot
                 .send_message(self.state_chat_id, "{}")
                 .await
                 .wrap_err_with(|| {
@@ -162,7 +184,8 @@ impl Notifier {
                 "sent initial state message, pinning"
             );
 
-            bot.pin_chat_message(self.state_chat_id, msg.id)
+            self.bot
+                .pin_chat_message(self.state_chat_id, msg.id)
                 .await
                 .wrap_err_with(|| {
                     format!(
@@ -184,21 +207,25 @@ impl Notifier {
     }
 
     async fn persist_state(&self) -> Result<()> {
-        let bot = &self.bot;
         let msg_id = match self.state_message_id {
             Some(id) => id,
             None => return Ok(()),
         };
 
-        let state = serialize_state(&self.message_cache);
+        let state = PersistentState {
+            message_id: self.message_id.map(|m| m.0),
+            sessions: self.sessions.clone(),
+        };
+        let text = serde_json::to_string(&state).unwrap_or_else(|_| "{}".to_owned());
 
         tracing::debug!(
             state_msg_id = msg_id.0,
-            state = %state,
+            state = %text,
             "persisting state"
         );
 
-        bot.edit_message_text(self.state_chat_id, msg_id, &state)
+        self.bot
+            .edit_message_text(self.state_chat_id, msg_id, &text)
             .await
             .wrap_err_with(|| {
                 format!(
@@ -211,81 +238,4 @@ impl Notifier {
 
         Ok(())
     }
-}
-
-fn format_notification(event: &VoiceEvent) -> String {
-    let update = event.update();
-    let mut msg = String::from("<blockquote>");
-
-    // Action line
-    let display = format_display_name(&update.username, &update.display_name);
-    msg.push_str(&format!(
-        "{} <b>{}</b> {}\n\n",
-        event.icon(),
-        html_escape(&display),
-        event.verb()
-    ));
-
-    // Channel info
-    msg.push_str(&format!(
-        "🎙 <b>Channel:</b> {}\n",
-        html_escape(&update.channel_name)
-    ));
-
-    if update.members.is_empty() {
-        msg.push_str("💤 No one in channel");
-    } else {
-        msg.push_str(&format!("👤 <b>Members:</b> {}\n\n", update.members.len()));
-        msg.push_str("📋 <b>Now in channel:</b>\n\n");
-        for member in &update.members {
-            let formatted = format_member_name(member);
-            msg.push_str(&format!("• {}\n", html_escape(&formatted)));
-        }
-    }
-
-    msg.push_str("</blockquote>");
-    msg
-}
-
-fn format_display_name(username: &str, display_name: &str) -> String {
-    let emoji = emoji::for_user(username);
-
-    if username == "lodanorely" {
-        return format!("{emoji} таракан {emoji}");
-    }
-
-    if display_name != username {
-        format!("{emoji} {display_name} ({username}) {emoji}")
-    } else {
-        format!("{emoji} {username}")
-    }
-}
-
-fn format_member_name(member: &MemberInfo) -> String {
-    let emoji = emoji::for_user(&member.username);
-    format!("{emoji} {}", member.display_name)
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-fn parse_state(text: &str) -> HashMap<ChannelId, MessageId> {
-    let raw: HashMap<String, i32> = serde_json::from_str(text).unwrap_or_default();
-    raw.into_iter()
-        .filter_map(|(k, v)| {
-            let channel_id = k.parse::<u64>().ok()?;
-            Some((ChannelId::new(channel_id), MessageId(v)))
-        })
-        .collect()
-}
-
-fn serialize_state(cache: &HashMap<ChannelId, MessageId>) -> String {
-    let raw: HashMap<String, i32> = cache
-        .iter()
-        .map(|(k, v)| (k.get().to_string(), v.0))
-        .collect();
-    serde_json::to_string(&raw).unwrap_or_else(|_| "{}".to_owned())
 }

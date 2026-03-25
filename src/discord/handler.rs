@@ -6,7 +6,7 @@ use serenity::prelude::{Context, EventHandler};
 use tokio::sync::mpsc;
 
 use crate::config::DiscordConfig;
-use crate::events::{ChannelUpdate, MemberInfo, VoiceEvent};
+use crate::events::{ChannelUpdate, VoiceEvent};
 
 pub struct Handler {
     pub config: DiscordConfig,
@@ -90,37 +90,35 @@ impl Handler {
         };
 
         for &channel_id in &self.config.tracked_channels {
-            let members: Vec<MemberInfo> = guild
-                .voice_states
-                .values()
-                .filter(|vs| vs.channel_id == Some(channel_id))
-                .map(|vs| resolve_member_info(&guild, vs.user_id))
-                .collect();
-
-            if members.is_empty() {
-                continue;
-            }
-
             let channel_name = guild
                 .channels
                 .get(&channel_id)
                 .map(|c| c.name.clone())
                 .unwrap_or_else(|| channel_id.to_string());
 
-            tracing::info!(
-                channel = %channel_name,
-                member_count = members.len(),
-                "sending initial state for channel"
-            );
+            let voice_states: Vec<_> = guild
+                .voice_states
+                .values()
+                .filter(|vs| vs.channel_id == Some(channel_id))
+                .collect();
 
-            let update = ChannelUpdate {
-                username: String::new(),
-                display_name: String::new(),
-                channel_name,
-                channel_id,
-                members,
-            };
-            self.send_event(VoiceEvent::InitialState(update)).await;
+            for vs in voice_states {
+                let (username, display_name) = resolve_display_names_from_guild(&guild, vs.user_id);
+
+                tracing::info!(
+                    channel = %channel_name,
+                    username = %username,
+                    "sending initial state for user"
+                );
+
+                let update = ChannelUpdate {
+                    username,
+                    display_name,
+                    channel_name: channel_name.clone(),
+                    channel_id,
+                };
+                self.send_event(VoiceEvent::InitialState(update)).await;
+            }
         }
     }
 }
@@ -146,24 +144,22 @@ fn resolve_display_names(
         })
 }
 
-fn resolve_member_info(guild: &serenity::model::guild::Guild, user_id: UserId) -> MemberInfo {
+/// Returns (raw_username, display_name) from a guild's member cache
+fn resolve_display_names_from_guild(
+    guild: &serenity::model::guild::Guild,
+    user_id: UserId,
+) -> (String, String) {
     guild
         .members
         .get(&user_id)
         .map(|member| {
             let username = member.user.name.clone();
-            let display_name = member.nick.as_deref().unwrap_or(&username).to_owned();
-            MemberInfo {
-                username,
-                display_name,
-            }
+            let display = member.nick.as_deref().unwrap_or(&username).to_owned();
+            (username, display)
         })
         .unwrap_or_else(|| {
             let id = user_id.to_string();
-            MemberInfo {
-                username: id.clone(),
-                display_name: id,
-            }
+            (id.clone(), id)
         })
 }
 
@@ -174,30 +170,16 @@ fn build_channel_update(
     username: &str,
     display_name: &str,
 ) -> ChannelUpdate {
-    let guild = ctx.cache.guild(guild_id);
-
-    let channel_name = guild
-        .as_ref()
-        .and_then(|g| g.channels.get(&channel_id))
-        .map(|c| c.name.clone())
+    let channel_name = ctx
+        .cache
+        .guild(guild_id)
+        .and_then(|g| g.channels.get(&channel_id).map(|c| c.name.clone()))
         .unwrap_or_else(|| channel_id.to_string());
-
-    let members: Vec<MemberInfo> = guild
-        .as_ref()
-        .map(|g| {
-            g.voice_states
-                .values()
-                .filter(|vs| vs.channel_id == Some(channel_id))
-                .map(|vs| resolve_member_info(g, vs.user_id))
-                .collect()
-        })
-        .unwrap_or_default();
 
     ChannelUpdate {
         username: username.to_owned(),
         display_name: display_name.to_owned(),
         channel_name,
         channel_id,
-        members,
     }
 }

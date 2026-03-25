@@ -1,16 +1,10 @@
 use serenity::model::id::ChannelId;
 
-pub struct MemberInfo {
-    pub username: String,
-    pub display_name: String,
-}
-
 pub struct ChannelUpdate {
     pub username: String,
     pub display_name: String,
     pub channel_name: String,
     pub channel_id: ChannelId,
-    pub members: Vec<MemberInfo>,
 }
 
 pub enum VoiceEvent {

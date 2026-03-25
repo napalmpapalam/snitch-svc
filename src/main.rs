@@ -78,8 +78,9 @@ async fn run_service(config: Config) -> Result<()> {
     let (tx, rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
     let cancel = CancellationToken::new();
 
+    let tracked_channels = config.discord.tracked_channels.clone();
     let mut discord_handle = tokio::spawn(discord::run(config.discord, tx, cancel.clone()));
-    let mut telegram_handle = tokio::spawn(telegram::run(config.telegram, rx));
+    let mut telegram_handle = tokio::spawn(telegram::run(config.telegram, rx, tracked_channels));
 
     // Wait for shutdown signal or early task failure
     tokio::select! {
