@@ -12,14 +12,14 @@ use teloxide_core::Bot;
 use tokio::sync::mpsc;
 
 use crate::config::TelegramConfig;
-use crate::events::VoiceEvent;
+use crate::events::DiscordEvent;
 
 use self::service::TelegramService;
 
 #[tracing::instrument(name = "telegram", skip_all)]
 pub async fn run(
     config: TelegramConfig,
-    mut rx: mpsc::Receiver<VoiceEvent>,
+    mut rx: mpsc::Receiver<DiscordEvent>,
     tracked_channels: Vec<ChannelId>,
 ) -> Result<()> {
     tracing::info!("telegram task started");
@@ -35,9 +35,14 @@ pub async fn run(
         tokio::select! {
             event = rx.recv() => {
                 match event {
-                    Some(event) => {
-                        if let Err(err) = svc.handle_event(&event).await {
+                    Some(DiscordEvent::Voice(voice_event)) => {
+                        if let Err(err) = svc.handle_event(&voice_event).await {
                             tracing::error!(%err, "failed to handle voice event");
+                        }
+                    }
+                    Some(DiscordEvent::BluePost(info)) => {
+                        if let Err(err) = svc.handle_blue_post(&info).await {
+                            tracing::error!(%err, "failed to handle blue post");
                         }
                     }
                     None => break,

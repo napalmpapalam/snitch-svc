@@ -79,6 +79,19 @@ pub struct ChannelUpdate {
     pub channel_id: ChannelId,
 }
 
+/// Information extracted from a Discord embed matching a blue post filter.
+pub struct BluePost {
+    pub title: String,
+    pub url: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Top-level event sent from Discord task to Telegram task.
+pub enum DiscordEvent {
+    Voice(VoiceEvent),
+    BluePost(BluePost),
+}
+
 pub enum VoiceEvent {
     Joined(ChannelUpdate),
     Left(ChannelUpdate),

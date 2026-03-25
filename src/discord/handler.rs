@@ -1,4 +1,5 @@
 use serenity::async_trait;
+use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
 use serenity::model::id::{ChannelId, GuildId, UserId};
 use serenity::model::voice::VoiceState;
@@ -6,11 +7,13 @@ use serenity::prelude::{Context, EventHandler};
 use tokio::sync::mpsc;
 
 use crate::config::DiscordConfig;
-use crate::events::{ChannelName, ChannelUpdate, DisplayName, Username, VoiceEvent};
+use crate::events::{
+    BluePost, ChannelName, ChannelUpdate, DiscordEvent, DisplayName, Username, VoiceEvent,
+};
 
 pub struct Handler {
     pub config: DiscordConfig,
-    pub tx: mpsc::Sender<VoiceEvent>,
+    pub tx: mpsc::Sender<DiscordEvent>,
 }
 
 #[async_trait]
@@ -22,6 +25,38 @@ impl EventHandler for Handler {
     async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
         tracing::info!("guild cache populated, sending initial state");
         self.send_initial_state(&ctx).await;
+    }
+
+    async fn message(&self, _ctx: Context, msg: Message) {
+        let Some(tc) = self
+            .config
+            .text_channels
+            .iter()
+            .find(|tc| tc.id == msg.channel_id)
+        else {
+            return;
+        };
+
+        let filter_lower = tc.filter.to_lowercase();
+        let matching_embed = msg.embeds.iter().find(|embed| {
+            embed
+                .title
+                .as_deref()
+                .is_some_and(|t| t.to_lowercase().contains(&filter_lower))
+        });
+
+        let Some(embed) = matching_embed else {
+            return;
+        };
+
+        let info = BluePost {
+            title: embed.title.clone().unwrap_or_default(),
+            url: embed.url.clone(),
+            description: embed.description.clone(),
+        };
+
+        tracing::info!(title = %info.title, "blue post detected, forwarding to telegram");
+        self.send_event(DiscordEvent::BluePost(info)).await;
     }
 
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
@@ -50,7 +85,8 @@ impl EventHandler for Handler {
                 &username,
                 &display_name,
             );
-            self.send_event(VoiceEvent::Left(update)).await;
+            self.send_event(DiscordEvent::Voice(VoiceEvent::Left(update)))
+                .await;
         }
 
         // Joined new channel
@@ -64,7 +100,8 @@ impl EventHandler for Handler {
                 &username,
                 &display_name,
             );
-            self.send_event(VoiceEvent::Joined(update)).await;
+            self.send_event(DiscordEvent::Voice(VoiceEvent::Joined(update)))
+                .await;
         }
     }
 }
@@ -74,9 +111,9 @@ impl Handler {
         self.config.tracked_channels.contains(&channel_id)
     }
 
-    async fn send_event(&self, event: VoiceEvent) {
+    async fn send_event(&self, event: DiscordEvent) {
         if let Err(err) = self.tx.send(event).await {
-            tracing::error!(%err, "failed to send voice event");
+            tracing::error!(%err, "failed to send discord event");
         }
     }
 
@@ -117,7 +154,8 @@ impl Handler {
                     channel_name: channel_name.clone(),
                     channel_id,
                 };
-                self.send_event(VoiceEvent::InitialState(update)).await;
+                self.send_event(DiscordEvent::Voice(VoiceEvent::InitialState(update)))
+                    .await;
             }
         }
     }

@@ -19,3 +19,6 @@ discord:
   tracked_channels:
     - "1257044413302046859"
     - "1257044413302046858"
+  text_channels:
+    - id: "1279905749686026321"
+      filter: "Class Tuning Incoming"

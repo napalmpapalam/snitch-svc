@@ -2,7 +2,7 @@ use chrono::{NaiveDate, TimeDelta, Utc};
 use serenity::model::id::ChannelId;
 
 use crate::emoji;
-use crate::events::VoiceEvent;
+use crate::events::{BluePost, VoiceEvent};
 
 use super::achievements::Achievement;
 use super::state::{ChannelNames, Sessions, WeeklyStats};
@@ -194,6 +194,37 @@ pub(crate) fn format_digest(
             html_escape(username.as_ref()),
             duration,
         ));
+    }
+
+    msg.push_str("</blockquote>");
+    msg
+}
+
+/// Max description length to stay within Telegram's 4096-char message limit.
+const MAX_DESCRIPTION_LEN: usize = 3500;
+
+/// Formats a blue post embed for forwarding to Telegram.
+pub(crate) fn format_blue_post(info: &BluePost) -> String {
+    let mut msg = String::from("<blockquote>");
+    msg.push_str("📰 <b>Blue Post</b>\n\n");
+
+    match &info.url {
+        Some(url) => msg.push_str(&format!(
+            "📌 <a href=\"{}\">{}</a>\n",
+            html_escape(url),
+            html_escape(&info.title),
+        )),
+        None => msg.push_str(&format!("📌 <b>{}</b>\n", html_escape(&info.title))),
+    }
+
+    if let Some(desc) = &info.description {
+        let escaped = html_escape(desc);
+        if escaped.len() > MAX_DESCRIPTION_LEN {
+            let truncated = &escaped[..MAX_DESCRIPTION_LEN];
+            msg.push_str(&format!("\n{truncated}…"));
+        } else {
+            msg.push_str(&format!("\n{escaped}"));
+        }
     }
 
     msg.push_str("</blockquote>");

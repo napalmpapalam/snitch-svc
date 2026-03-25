@@ -8,17 +8,19 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::DiscordConfig;
-use crate::events::VoiceEvent;
+use crate::events::DiscordEvent;
 
 use self::handler::Handler;
 
 #[tracing::instrument(name = "discord", skip_all)]
 pub async fn run(
     config: DiscordConfig,
-    tx: mpsc::Sender<VoiceEvent>,
+    tx: mpsc::Sender<DiscordEvent>,
     cancel: CancellationToken,
 ) -> Result<()> {
-    let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES;
+    let intents = GatewayIntents::GUILDS
+        | GatewayIntents::GUILD_VOICE_STATES
+        | GatewayIntents::GUILD_MESSAGES;
 
     let mut client = Client::builder(config.token.expose_secret(), intents)
         .event_handler(Handler { config, tx })

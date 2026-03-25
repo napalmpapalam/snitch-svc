@@ -143,6 +143,13 @@ impl TelegramService {
         Ok(())
     }
 
+    pub async fn handle_blue_post(&self, info: &crate::events::BluePost) -> Result<()> {
+        tracing::info!(title = %info.title, "forwarding blue post to telegram");
+        let message = super::format::format_blue_post(info);
+        self.send_message(&message).await?;
+        Ok(())
+    }
+
     pub async fn handle_tick(&mut self) -> Result<()> {
         // Clean stale data
         cleanup_stale(&mut self.shown_achievements, &mut self.recent_leaves);

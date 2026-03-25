@@ -42,8 +42,18 @@ pub struct DiscordConfig {
     pub target_guild_id: GuildId,
     #[serde(deserialize_with = "deserialize_channel_ids")]
     pub tracked_channels: Vec<ChannelId>,
+    #[serde(default)]
+    pub text_channels: Vec<TextChannelConfig>,
     #[serde(skip)]
     pub token: SecretString,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TextChannelConfig {
+    #[serde(deserialize_with = "deserialize_channel_id")]
+    pub id: ChannelId,
+    #[serde(deserialize_with = "deserialize_trimmed")]
+    pub filter: String,
 }
 
 impl Config {
@@ -89,6 +99,15 @@ where
     Ok(GuildId::new(id))
 }
 
+fn deserialize_channel_id<'de, D>(deserializer: D) -> Result<ChannelId, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    let id: u64 = s.parse().map_err(serde::de::Error::custom)?;
+    Ok(ChannelId::new(id))
+}
+
 fn deserialize_channel_ids<'de, D>(deserializer: D) -> Result<Vec<ChannelId>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -101,4 +120,12 @@ where
             Ok(ChannelId::new(id))
         })
         .collect()
+}
+
+fn deserialize_trimmed<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Ok(s.trim().to_owned())
 }
