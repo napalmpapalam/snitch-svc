@@ -20,7 +20,8 @@ pub async fn run(
 ) -> Result<()> {
     let intents = GatewayIntents::GUILDS
         | GatewayIntents::GUILD_VOICE_STATES
-        | GatewayIntents::GUILD_MESSAGES;
+        | GatewayIntents::GUILD_MESSAGES
+        | GatewayIntents::MESSAGE_CONTENT;
 
     let mut client = Client::builder(config.token.expose_secret(), intents)
         .event_handler(Handler { config, tx })
