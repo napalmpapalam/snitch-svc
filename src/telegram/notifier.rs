@@ -11,32 +11,21 @@ use crate::emoji;
 use crate::events::{MemberInfo, VoiceEvent};
 
 pub struct Notifier {
-    bot: Option<Bot>,
+    bot: Bot,
     chat_id: ChatId,
     state_chat_id: ChatId,
     state_message_id: Option<MessageId>,
     message_cache: HashMap<ChannelId, MessageId>,
 }
 
-impl Default for Notifier {
-    fn default() -> Self {
-        Self {
-            bot: None,
-            chat_id: ChatId(0),
-            state_chat_id: ChatId(0),
-            state_message_id: None,
-            message_cache: HashMap::new(),
-        }
-    }
-}
-
 impl Notifier {
     pub async fn new(bot: Bot, chat_id: ChatId, state_chat_id: ChatId) -> Result<Self> {
         let mut notifier = Self {
-            bot: Some(bot),
+            bot,
             chat_id,
             state_chat_id,
-            ..Default::default()
+            state_message_id: None,
+            message_cache: HashMap::new(),
         };
         notifier.load_state().await?;
         Ok(notifier)
@@ -54,10 +43,6 @@ impl Notifier {
             channel_id = %update.channel_id,
             "voice event"
         );
-
-        if self.bot.is_none() {
-            return Ok(());
-        }
 
         // Skip initial state entirely — only send on actual join/leave
         if event.is_initial_state() {
@@ -94,7 +79,7 @@ impl Notifier {
     }
 
     async fn send_message(&self, text: &str) -> Result<Option<MessageId>> {
-        let bot = self.bot.as_ref().expect("bot must be set");
+        let bot = &self.bot;
         tracing::debug!(chat_id = %self.chat_id, "sending telegram message");
         match bot
             .send_message(self.chat_id, text)
@@ -113,7 +98,7 @@ impl Notifier {
     }
 
     async fn delete_message(&self, message_id: MessageId) {
-        let bot = self.bot.as_ref().expect("bot must be set");
+        let bot = &self.bot;
         match bot.delete_message(self.chat_id, message_id).await {
             Ok(_) => {
                 tracing::debug!(
@@ -134,7 +119,7 @@ impl Notifier {
     }
 
     async fn load_state(&mut self) -> Result<()> {
-        let bot = self.bot.as_ref().expect("bot must be set");
+        let bot = &self.bot;
 
         tracing::info!(state_chat_id = %self.state_chat_id, "loading state from telegram");
 
@@ -199,7 +184,7 @@ impl Notifier {
     }
 
     async fn persist_state(&self) -> Result<()> {
-        let bot = self.bot.as_ref().expect("bot must be set");
+        let bot = &self.bot;
         let msg_id = match self.state_message_id {
             Some(id) => id,
             None => return Ok(()),
