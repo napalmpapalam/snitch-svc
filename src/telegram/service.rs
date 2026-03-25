@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::Utc;
 use eyre::{Result, WrapErr};
 use serenity::model::id::ChannelId;
@@ -6,7 +8,7 @@ use teloxide_core::payloads::{EditMessageTextSetters, SendMessageSetters};
 use teloxide_core::prelude::Requester;
 use teloxide_core::types::{ChatId, MessageId, ParseMode};
 
-use crate::events::VoiceEvent;
+use crate::events::{Username, VoiceEvent};
 
 use super::achievements::{cleanup_stale, detect_event_achievements, detect_tick_achievements};
 use super::format::{format_event_message, format_status_message};
@@ -28,6 +30,10 @@ pub struct TelegramService {
     shown_achievements: ShownAchievements,
     recent_leaves: RecentLeaves,
     last_message_text: Option<String>,
+    /// Users seen in InitialState events (transient, for reconciliation).
+    initial_state_users: HashSet<Username>,
+    /// Whether reconciliation has been performed after initial state.
+    initial_state_done: bool,
 }
 
 impl TelegramService {
@@ -50,6 +56,8 @@ impl TelegramService {
             shown_achievements: ShownAchievements::new(),
             recent_leaves: RecentLeaves::new(),
             last_message_text: None,
+            initial_state_users: HashSet::new(),
+            initial_state_done: false,
         };
         svc.load_state().await?;
         Ok(svc)
@@ -90,6 +98,12 @@ impl TelegramService {
                 "populated session from initial state"
             );
             return Ok(());
+        }
+
+        // Reconcile on first real event after initial state
+        if !self.initial_state_done {
+            self.reconcile_stale_sessions();
+            self.initial_state_done = true;
         }
 
         // Detect achievements
@@ -166,7 +180,26 @@ impl TelegramService {
     /// Updates sessions and returns the removed session (if any, on Leave).
     fn update_sessions(&mut self, event: &VoiceEvent) -> Option<SessionInfo> {
         match event {
-            VoiceEvent::Joined(u) | VoiceEvent::InitialState(u) => {
+            VoiceEvent::InitialState(u) => {
+                self.initial_state_users.insert(u.username.clone());
+                // Keep persisted joined_at if user already in sessions (survived restart)
+                if let Some(session) = self.sessions.get_mut(&u.username) {
+                    session.display_name = u.display_name.clone();
+                    session.channel_id = u.channel_id;
+                } else {
+                    // New user (joined while service was down)
+                    self.sessions.insert(
+                        u.username.clone(),
+                        SessionInfo {
+                            display_name: u.display_name.clone(),
+                            channel_id: u.channel_id,
+                            joined_at: Utc::now(),
+                        },
+                    );
+                }
+                None
+            }
+            VoiceEvent::Joined(u) => {
                 self.sessions.insert(
                     u.username.clone(),
                     SessionInfo {
@@ -212,6 +245,35 @@ impl TelegramService {
                 removed
             }
         }
+    }
+
+    /// Removes users from sessions who were persisted but not seen in InitialState
+    /// (they left while the service was down). Accumulates their voice time.
+    fn reconcile_stale_sessions(&mut self) {
+        let stale_users: Vec<Username> = self
+            .sessions
+            .keys()
+            .filter(|u| !self.initial_state_users.contains(u))
+            .cloned()
+            .collect();
+
+        for username in &stale_users {
+            if let Some(session) = self.sessions.remove(username) {
+                let duration_secs = (Utc::now() - session.joined_at).num_seconds();
+                if duration_secs > 0 {
+                    let user_stats = self.weekly_stats.users.entry(username.clone()).or_default();
+                    user_stats.total_seconds += duration_secs;
+                }
+
+                tracing::info!(
+                    username = %username,
+                    "removed stale session (user left while service was down)"
+                );
+            }
+        }
+
+        // Clear transient state
+        self.initial_state_users.clear();
     }
 
     async fn send_message(&self, text: &str) -> Result<Option<MessageId>> {
