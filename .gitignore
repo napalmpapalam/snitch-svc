@@ -38,4 +38,5 @@ golang
 # Added by cargo
 
 /target
-docs
+docs/superpowers
+!docs

@@ -1,118 +1,124 @@
 # snitch-svc
 
-Discord voice channel activity monitor that sends notifications to Telegram.
+Discord voice channel activity monitor that sends notifications to Telegram when users join or leave tracked channels.
 
-## Overview
+## Prerequisites
 
-Snitch watches specific Discord voice channels for user activity and sends real-time notifications to a Telegram chat when users join, leave, or switch channels. It tracks session durations, detects achievements, and sends weekly voice time leaderboards.
+- **Rust 1.92+** — [Install via rustup](https://rustup.rs/)
+- **Docker** (optional) — [Install Docker](https://docs.docker.com/get-docker/)
+- A **Discord bot token** with voice state and message content intents
+- A **Telegram bot token** with access to the target chat
 
-## Features
+## Installation
 
-- **Voice tracking** — detects joins, leaves, and channel switches
-- **Combined message** — single Telegram message showing all active channels and members
-- **Duration tracking** — shows how long each member has been in voice, survives restarts
-- **Achievements** — fun badges triggered by events (Party starter, Speed run, Boomerang, etc.) and durations (Marathon, Overtime, etc.)
-- **Weekly digest** — Monday 9 AM (Ukraine time) leaderboard with voice time stats
-- **State persistence** — all state stored in a Telegram pinned message (no external DB)
-- **Periodic updates** — duration tick edits the message in place every N minutes
-- **InitialState reconciliation** — correctly handles users who joined/left while the service was down
-- **Graceful shutdown** on SIGTERM/SIGINT
-
-## Architecture
-
-Two async tasks communicate via a bounded `mpsc` channel:
-
-```
-Discord Gateway ──→ [Discord Task] ──→ mpsc(32) ──→ [Telegram Task] ──→ Telegram API
-                    (producer)                       (consumer)
-```
-
-- **Discord task** connects to the Discord gateway, listens for voice state updates, resolves display names from the guild cache, and sends `VoiceEvent`s to the channel.
-- **Telegram task** receives events, maintains voice sessions, detects achievements, formats HTML notifications, manages message lifecycle (delete old → send new on events, edit in place on ticks), and persists state to a pinned message.
-
-## Project Structure
-
-```
-src/
-├── main.rs              # CLI, config loading, task orchestration, shutdown
-├── config.rs            # YAML config deserialization, env var injection
-├── emoji.rs             # Random emoji pool
-├── events.rs            # VoiceEvent enum, ChannelUpdate, newtypes (Username, DisplayName, ChannelName)
-├── discord/
-│   ├── mod.rs           # Discord bot setup, gateway connection
-│   └── handler.rs       # Voice state update handler, initial state emission
-└── telegram/
-    ├── mod.rs           # Telegram bot setup, tokio::select! loop (events + tick)
-    ├── service.rs       # TelegramService: session management, event/tick handling, state persistence
-    ├── state.rs         # Data model: SessionInfo, WeeklyStats, PersistentState, type aliases
-    ├── format.rs        # Message formatting: event, status, digest, duration
-    └── achievements.rs  # Achievement detection: immediate (join/leave) and duration-based (tick)
-```
-
-## Getting Started
-
-### Prerequisites
-
-- Rust toolchain (stable)
-- A Discord bot token with voice state intents enabled
-- A Telegram bot token and chat ID for notifications
-
-### Configuration
-
-Create `config.yaml` (or `config.local.yaml` for development):
-
-```yaml
-log:
-  level: info
-  filter:
-    - "serenity=warn"
-
-telegram:
-  chat_id: <telegram-chat-id>
-  state_chat_id: <telegram-state-chat-id>
-  duration_tick_minutes: 5
-
-discord:
-  target_guild_id: "<discord-guild-id>"
-  tracked_channels:
-    - "<channel-id-1>"
-    - "<channel-id-2>"
-```
-
-Tokens are provided via environment variables:
+### From Source
 
 ```bash
-export DISCORD_TOKEN="your-discord-bot-token"
-export TELEGRAM_TOKEN="your-telegram-bot-token"
+git clone https://github.com/nickskyline/snitch-svc.git
+cd snitch-svc
+cargo build --release
 ```
 
-### Running
+### Verify
 
 ```bash
-# Run with default config.yaml
-cargo run -- run all
-
-# Run with local config
-CONFIG=config.local.yaml cargo run -- run all
+./target/release/snitch --help
 ```
 
 ### Docker
 
 ```bash
 docker build -t snitch-svc .
+```
+
+## Usage
+
+```bash
+export DISCORD_TOKEN="your-discord-bot-token"
+export TELEGRAM_TOKEN="your-telegram-bot-token"
+
+# Run the service
+snitch run all
+```
+
+With Docker:
+
+```bash
 docker run -e DISCORD_TOKEN="..." -e TELEGRAM_TOKEN="..." snitch-svc
 ```
+
+## Configuration
+
+The service reads from `config.yaml` (override with `CONFIG` env var):
+
+```yaml
+log:
+  level: debug
+  filter:
+    - "serenity=warn"
+    - "hyper_util=warn"
+
+telegram:
+  chat_id: -100123456789          # Telegram group to send notifications
+  state_chat_id: -100987654321    # Telegram chat for state persistence
+  duration_tick_minutes: 5        # Status update interval
+
+discord:
+  target_guild_id: "123456789"
+  tracked_channels:               # Voice channels to monitor
+    - "111111111"
+    - "222222222"
+  text_channels:                  # Text channels for blue post forwarding
+    - id: "333333333"
+      filter: "Class Tuning Incoming"
+```
+
+| Variable | Purpose |
+|----------|---------|
+| `DISCORD_TOKEN` | Discord bot authentication token |
+| `TELEGRAM_TOKEN` | Telegram bot authentication token |
+| `CONFIG` | Path to config file (default: `config.yaml`) |
+
+## Architecture
+
+Two async Tokio tasks connected by a bounded `mpsc` channel:
+
+```
+Discord Gateway ──▶ Discord Task ──▶ [mpsc channel] ──▶ Telegram Task ──▶ Telegram API
+                   (event producer)                     (event consumer)
+```
+
+- **Discord task** — connects via serenity, listens for voice state updates and message embeds, sends events to the channel
+- **Telegram task** — receives events, formats HTML notifications, manages message lifecycle, persists state to a pinned message
+
+### Features
+
+- Voice join/leave/switch notifications with member lists and session durations
+- Weekly voice time statistics with Monday morning digests
+- Achievement detection (PartyStarter, SpeedRun, Boomerang, Channel Hopper, Dynamic Duo, and more)
+- Blue post forwarding — detects Discord embeds matching configured keywords and forwards to Telegram
+- State persistence across restarts via pinned Telegram message
+- Graceful shutdown on SIGINT/SIGTERM
 
 ## Development
 
 ```bash
-cargo build                    # Development build
-cargo build --release          # Release build (LTO, panic=abort)
-cargo clippy -- -D warnings    # Lint (warnings are errors)
-cargo fmt                      # Format
-cargo test                     # Run tests
+# Debug build
+cargo build
+
+# Lint (strict — warnings are errors)
+cargo clippy -- -D warnings
+
+# Format
+cargo fmt
+
+# Run tests
+cargo test
+
+# Local config
+CONFIG=config.local.yaml cargo run -- run all
 ```
 
 ## License
 
-See [LICENSE](LICENSE).
+[MIT](LICENSE)
