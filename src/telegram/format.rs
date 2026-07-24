@@ -243,7 +243,7 @@ pub(crate) fn format_birthday(username: &str, display_name: Option<&str>) -> Str
         _ => html_escape(username),
     };
 
-    format!("🎂 <b>Happy birthday, {name}!</b> 🎉")
+    format!("<blockquote>🎂 <b>Happy birthday, {name}!</b> 🎉</blockquote>")
 }
 
 fn format_display_name(username: &str, display_name: &str) -> String {
@@ -270,13 +270,13 @@ mod tests {
     fn names_user_by_display_name_and_username() {
         assert_eq!(
             format_birthday("napalmpapalam", Some("Семёныч")),
-            "🎂 <b>Happy birthday, Семёныч (napalmpapalam)!</b> 🎉"
+            "<blockquote>🎂 <b>Happy birthday, Семёныч (napalmpapalam)!</b> 🎉</blockquote>"
         );
     }
 
     #[test]
     fn falls_back_to_username_alone() {
-        let expected = "🎂 <b>Happy birthday, negore_!</b> 🎉";
+        let expected = "<blockquote>🎂 <b>Happy birthday, negore_!</b> 🎉</blockquote>";
         assert_eq!(format_birthday("negore_", None), expected);
         assert_eq!(format_birthday("negore_", Some("negore_")), expected);
     }
@@ -285,7 +285,7 @@ mod tests {
     fn escapes_html_in_both_names() {
         assert_eq!(
             format_birthday("a&b", Some("<script>")),
-            "🎂 <b>Happy birthday, &lt;script&gt; (a&amp;b)!</b> 🎉"
+            "<blockquote>🎂 <b>Happy birthday, &lt;script&gt; (a&amp;b)!</b> 🎉</blockquote>"
         );
     }
 }
