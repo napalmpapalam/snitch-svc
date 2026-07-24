@@ -62,6 +62,9 @@ telegram:
   chat_id: -100123456789          # Telegram group to send notifications
   state_chat_id: -100987654321    # Telegram chat for state persistence
   duration_tick_minutes: 5        # Status update interval
+  birthdays:                      # Optional — greeted at midnight Kyiv time
+    - username: someone           # Discord username; display name added if known
+      date: "07-24"               # MM-DD, no birth year
 
 discord:
   target_guild_id: "123456789"
@@ -73,11 +76,13 @@ discord:
       filter: "Class Tuning Incoming"
 ```
 
-| Variable | Purpose |
-|----------|---------|
-| `DISCORD_TOKEN` | Discord bot authentication token |
-| `TELEGRAM_TOKEN` | Telegram bot authentication token |
-| `CONFIG` | Path to config file (default: `config.yaml`) |
+
+| Variable         | Purpose                                      |
+| ---------------- | -------------------------------------------- |
+| `DISCORD_TOKEN`  | Discord bot authentication token             |
+| `TELEGRAM_TOKEN` | Telegram bot authentication token            |
+| `CONFIG`         | Path to config file (default: `config.yaml`) |
+
 
 ## Architecture
 
@@ -95,6 +100,7 @@ Discord Gateway ──▶ Discord Task ──▶ [mpsc channel] ──▶ Telegr
 
 - Voice join/leave/switch notifications with member lists and session durations
 - Weekly voice time statistics with Monday morning digests
+- Birthday greetings posted at midnight Kyiv time, once per day
 - Achievement detection (PartyStarter, SpeedRun, Boomerang, Channel Hopper, Dynamic Duo, and more)
 - Blue post forwarding — detects Discord embeds matching configured keywords and forwards to Telegram
 - State persistence across restarts via pinned Telegram message

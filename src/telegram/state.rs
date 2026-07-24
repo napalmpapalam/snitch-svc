@@ -7,6 +7,10 @@ use serenity::model::id::ChannelId;
 
 use crate::events::{ChannelName, DisplayName, Username};
 
+/// Last known display name per user — outlives their voice session, so
+/// greetings can name someone who isn't currently in a channel.
+pub(crate) type DisplayNames = HashMap<Username, DisplayName>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionInfo {
     pub display_name: DisplayName,
@@ -152,11 +156,15 @@ pub(crate) struct PersistentState {
     )]
     pub channel_names: ChannelNames,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub display_names: DisplayNames,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub shown_achievements: ShownAchievements,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub recent_leaves: RecentLeaves,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_digest_sent: Option<NaiveDate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_birthday_sent: Option<NaiveDate>,
 }
 
 fn ser_channel_id<S: serde::Serializer>(id: &ChannelId, s: S) -> Result<S::Ok, S::Error> {

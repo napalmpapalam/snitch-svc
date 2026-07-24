@@ -13,6 +13,23 @@ telegram:
   chat_id: -1002395411796
   state_chat_id: -1003690216546
   duration_tick_minutes: 5
+  birthdays:
+    - username: ner0bro
+      date: "01-01"
+    - username: valbdes
+      date: "01-23"
+    - username: agentpiknik
+      date: "04-14"
+    - username: negore_
+      date: "05-27"
+    - username: karr3d
+      date: "07-24"
+    - username: napalmpapalam
+      date: "08-20"
+    - username: kudyaplick
+      date: "08-21"
+    - username: rotabigan
+      date: "09-23"
 
 discord:
   target_guild_id: "1257044413302046853"

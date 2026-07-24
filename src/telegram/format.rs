@@ -170,7 +170,7 @@ pub(crate) fn format_digest(
         .iter()
         .filter(|(_, s)| s.total_seconds > 0)
         .collect();
-    leaderboard.sort_by(|a, b| b.1.total_seconds.cmp(&a.1.total_seconds));
+    leaderboard.sort_by_key(|(_, s)| std::cmp::Reverse(s.total_seconds));
 
     if leaderboard.is_empty() {
         msg.push_str("\n💤 No voice activity this week");
@@ -231,6 +231,21 @@ pub(crate) fn format_blue_post(info: &BluePost) -> String {
     msg
 }
 
+/// Formats the one-line birthday greeting.
+///
+/// Names the user as `display (username)` when a display name is known and
+/// differs, matching how channel updates render people.
+pub(crate) fn format_birthday(username: &str, display_name: Option<&str>) -> String {
+    let name = match display_name {
+        Some(display) if display != username => {
+            format!("{} ({})", html_escape(display), html_escape(username))
+        }
+        _ => html_escape(username),
+    };
+
+    format!("🎂 <b>Happy birthday, {name}!</b> 🎉")
+}
+
 fn format_display_name(username: &str, display_name: &str) -> String {
     let emoji = emoji::random();
 
@@ -245,4 +260,32 @@ pub(crate) fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_birthday;
+
+    #[test]
+    fn names_user_by_display_name_and_username() {
+        assert_eq!(
+            format_birthday("napalmpapalam", Some("Семёныч")),
+            "🎂 <b>Happy birthday, Семёныч (napalmpapalam)!</b> 🎉"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_username_alone() {
+        let expected = "🎂 <b>Happy birthday, negore_!</b> 🎉";
+        assert_eq!(format_birthday("negore_", None), expected);
+        assert_eq!(format_birthday("negore_", Some("negore_")), expected);
+    }
+
+    #[test]
+    fn escapes_html_in_both_names() {
+        assert_eq!(
+            format_birthday("a&b", Some("<script>")),
+            "🎂 <b>Happy birthday, &lt;script&gt; (a&amp;b)!</b> 🎉"
+        );
+    }
 }

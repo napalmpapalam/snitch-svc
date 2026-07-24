@@ -24,8 +24,14 @@ pub async fn run(
 ) -> Result<()> {
     tracing::info!("telegram task started");
     let bot = Bot::new(config.token.expose_secret());
-    let mut svc =
-        TelegramService::new(bot, config.chat_id, config.state_chat_id, tracked_channels).await?;
+    let mut svc = TelegramService::new(
+        bot,
+        config.chat_id,
+        config.state_chat_id,
+        tracked_channels,
+        config.birthdays,
+    )
+    .await?;
 
     let mut tick = tokio::time::interval(Duration::from_secs(config.duration_tick_minutes * 60));
     // First tick fires immediately — skip it

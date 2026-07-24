@@ -9,13 +9,14 @@ use teloxide_core::payloads::{EditMessageTextSetters, SendMessageSetters};
 use teloxide_core::prelude::Requester;
 use teloxide_core::types::{ChatId, MessageId, ParseMode};
 
+use crate::config::Birthday;
 use crate::events::{Username, VoiceEvent};
 
 use super::achievements::{cleanup_stale, detect_event_achievements, detect_tick_achievements};
-use super::format::{format_digest, format_event_message, format_status_message};
+use super::format::{format_birthday, format_digest, format_event_message, format_status_message};
 use super::state::current_week_start;
 use super::state::{
-    ChannelNames, PersistentState, RecentLeave, RecentLeaves, SessionInfo, Sessions,
+    ChannelNames, DisplayNames, PersistentState, RecentLeave, RecentLeaves, SessionInfo, Sessions,
     ShownAchievements, WeeklyStats,
 };
 
@@ -29,9 +30,12 @@ pub struct TelegramService {
     sessions: Sessions,
     weekly_stats: WeeklyStats,
     channel_names: ChannelNames,
+    display_names: DisplayNames,
     shown_achievements: ShownAchievements,
     recent_leaves: RecentLeaves,
+    birthdays: Vec<Birthday>,
     last_digest_sent: Option<NaiveDate>,
+    last_birthday_sent: Option<NaiveDate>,
     last_message_text: Option<String>,
     /// Users seen in InitialState events (transient, for reconciliation).
     initial_state_users: HashSet<Username>,
@@ -45,6 +49,7 @@ impl TelegramService {
         chat_id: ChatId,
         state_chat_id: ChatId,
         tracked_channels: Vec<ChannelId>,
+        birthdays: Vec<Birthday>,
     ) -> Result<Self> {
         let mut svc = Self {
             bot,
@@ -56,9 +61,12 @@ impl TelegramService {
             sessions: Sessions::new(),
             weekly_stats: WeeklyStats::default(),
             channel_names: ChannelNames::new(),
+            display_names: DisplayNames::new(),
             shown_achievements: ShownAchievements::new(),
             recent_leaves: RecentLeaves::new(),
+            birthdays,
             last_digest_sent: None,
+            last_birthday_sent: None,
             last_message_text: None,
             initial_state_users: HashSet::new(),
             initial_state_done: false,
@@ -83,6 +91,10 @@ impl TelegramService {
         // Update channel name cache
         self.channel_names
             .insert(update.channel_id, update.channel_name.clone());
+
+        // Remember the display name — outlives the session, used by greetings
+        self.display_names
+            .insert(update.username.clone(), update.display_name.clone());
 
         // Capture pre-update channel member count (for Party starter detection)
         let pre_channel_count = self
@@ -158,6 +170,9 @@ impl TelegramService {
         // Check weekly digest trigger
         self.check_weekly_digest().await?;
 
+        // Check birthday greetings
+        self.check_birthdays().await?;
+
         // Update status message if anyone is in voice
         if let Some(msg_id) = self.message_id
             && !self.sessions.is_empty()
@@ -226,6 +241,44 @@ impl TelegramService {
         }
         self.weekly_stats.week_start = current_week_start();
         self.last_digest_sent = Some(today);
+
+        self.persist_state().await?;
+
+        Ok(())
+    }
+
+    /// Greets everyone whose birthday is today (Kyiv time), once per day.
+    async fn check_birthdays(&mut self) -> Result<()> {
+        let today = Utc::now().with_timezone(&Kyiv).date_naive();
+
+        // Already greeted today
+        if self.last_birthday_sent == Some(today) {
+            return Ok(());
+        }
+
+        // Greeting text resolved up front — `send_message` borrows `self`.
+        let greetings: Vec<(&str, String)> = self
+            .birthdays
+            .iter()
+            .filter(|b| b.is_today(today))
+            .map(|b| {
+                let username = b.username.as_str();
+                let display = self
+                    .display_names
+                    .get(&Username::new(username))
+                    .map(AsRef::as_ref);
+                (username, format_birthday(username, display))
+            })
+            .collect();
+
+        // Mark the day as handled even with nobody to greet — it costs one
+        // state write per day and keeps the check cheap on later ticks.
+        self.last_birthday_sent = Some(today);
+
+        for (username, greeting) in &greetings {
+            tracing::info!(username, "sending birthday greeting");
+            self.send_message(greeting).await?;
+        }
 
         self.persist_state().await?;
 
@@ -416,9 +469,19 @@ impl TelegramService {
             self.sessions = state.sessions;
             self.weekly_stats = state.weekly_stats.unwrap_or_default();
             self.channel_names = state.channel_names;
+            self.display_names = state.display_names;
             self.shown_achievements = state.shown_achievements;
             self.recent_leaves = state.recent_leaves;
             self.last_digest_sent = state.last_digest_sent;
+            self.last_birthday_sent = state.last_birthday_sent;
+
+            // Seed the display-name cache from live sessions, so state written
+            // before the cache existed still names people correctly.
+            for (username, session) in &self.sessions {
+                self.display_names
+                    .entry(username.clone())
+                    .or_insert_with(|| session.display_name.clone());
+            }
 
             tracing::info!(
                 state_msg_id = pinned.id.0,
@@ -482,9 +545,11 @@ impl TelegramService {
             sessions: self.sessions.clone(),
             weekly_stats: Some(self.weekly_stats.clone()),
             channel_names: self.channel_names.clone(),
+            display_names: self.display_names.clone(),
             shown_achievements: self.shown_achievements.clone(),
             recent_leaves: self.recent_leaves.clone(),
             last_digest_sent: self.last_digest_sent,
+            last_birthday_sent: self.last_birthday_sent,
         };
         let text = serde_json::to_string(&state).unwrap_or_else(|_| "{}".to_owned());
 

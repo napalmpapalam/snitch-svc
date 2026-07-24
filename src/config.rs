@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use chrono::{Datelike, NaiveDate};
 use eyre::{Result, WrapErr};
 use secrecy::SecretString;
 use serde::Deserialize;
@@ -28,12 +29,33 @@ pub struct TelegramConfig {
     pub state_chat_id: ChatId,
     #[serde(default = "default_tick_minutes")]
     pub duration_tick_minutes: u64,
+    #[serde(default)]
+    pub birthdays: Vec<Birthday>,
     #[serde(skip)]
     pub token: SecretString,
 }
 
 fn default_tick_minutes() -> u64 {
     5
+}
+
+/// A member's birthday: their Discord username plus the month/day it falls on.
+///
+/// `username` doubles as the lookup key for the cached display name.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Birthday {
+    #[serde(deserialize_with = "deserialize_trimmed")]
+    pub username: String,
+    #[serde(deserialize_with = "deserialize_month_day")]
+    pub date: (u32, u32),
+}
+
+impl Birthday {
+    /// Whether this birthday falls on `today` in the caller's timezone.
+    pub fn is_today(&self, today: NaiveDate) -> bool {
+        let (month, day) = self.date;
+        today.month() == month && today.day() == day
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,4 +150,73 @@ where
 {
     let s = String::deserialize(deserializer)?;
     Ok(s.trim().to_owned())
+}
+
+/// Parses a `"MM-DD"` birthday into a validated `(month, day)` pair.
+fn deserialize_month_day<'de, D>(deserializer: D) -> Result<(u32, u32), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    let (month, day) = s
+        .trim()
+        .split_once('-')
+        .ok_or_else(|| serde::de::Error::custom(format!("expected MM-DD, got {s:?}")))?;
+
+    let month: u32 = month.parse().map_err(serde::de::Error::custom)?;
+    let day: u32 = day.parse().map_err(serde::de::Error::custom)?;
+
+    // 2000 is a leap year, so 02-29 is accepted (it just never fires off-cycle).
+    NaiveDate::from_ymd_opt(2000, month, day)
+        .ok_or_else(|| serde::de::Error::custom(format!("invalid month/day: {s:?}")))?;
+
+    Ok((month, day))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Birthday;
+
+    fn parse(date: &str) -> Result<Birthday, serde_yaml::Error> {
+        serde_yaml::from_str(&format!("username: someone\ndate: \"{date}\""))
+    }
+
+    #[test]
+    fn parses_valid_month_day() {
+        let birthday = parse("07-24").expect("valid date");
+        assert_eq!(birthday.date, (7, 24));
+        assert_eq!(birthday.username, "someone");
+    }
+
+    #[test]
+    fn accepts_leap_day() {
+        assert_eq!(parse("02-29").expect("leap day").date, (2, 29));
+    }
+
+    #[test]
+    fn rejects_out_of_range_month() {
+        assert!(parse("13-01").is_err());
+    }
+
+    #[test]
+    fn rejects_day_beyond_month_length() {
+        assert!(parse("02-30").is_err());
+    }
+
+    #[test]
+    fn rejects_garbage() {
+        assert!(parse("not-a-date").is_err());
+        assert!(parse("0724").is_err());
+    }
+
+    #[test]
+    fn matches_only_its_own_month_and_day() {
+        let birthday = parse("07-24").expect("valid date");
+        let date = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).expect("valid date");
+
+        assert!(birthday.is_today(date(2026, 7, 24)));
+        assert!(birthday.is_today(date(2027, 7, 24)));
+        assert!(!birthday.is_today(date(2026, 7, 25)));
+        assert!(!birthday.is_today(date(2026, 8, 24)));
+    }
 }
