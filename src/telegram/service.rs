@@ -156,9 +156,9 @@ impl TelegramService {
         Ok(())
     }
 
-    pub async fn handle_blue_post(&self, info: &crate::events::BluePost) -> Result<()> {
-        tracing::info!(title = %info.title, "forwarding blue post to telegram");
-        let message = super::format::format_blue_post(info);
+    pub async fn handle_feed_post(&self, info: &crate::events::FeedPost) -> Result<()> {
+        tracing::info!(label = %info.label, title = ?info.title, "forwarding message to telegram");
+        let message = super::format::format_feed_post(info);
         self.send_message(&message).await?;
         Ok(())
     }

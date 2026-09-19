@@ -79,9 +79,11 @@ pub struct ChannelUpdate {
     pub channel_id: ChannelId,
 }
 
-/// Information extracted from a Discord embed matching a blue post filter.
-pub struct BluePost {
-    pub title: String,
+/// A Discord message forwarded from a mirrored text channel (a Wowhead webhook feed).
+pub struct FeedPost {
+    /// Header shown on the Telegram message, from the channel config.
+    pub label: String,
+    pub title: Option<String>,
     pub url: Option<String>,
     pub description: Option<String>,
 }
@@ -89,7 +91,7 @@ pub struct BluePost {
 /// Top-level event sent from Discord task to Telegram task.
 pub enum DiscordEvent {
     Voice(VoiceEvent),
-    BluePost(BluePost),
+    FeedPost(FeedPost),
 }
 
 pub enum VoiceEvent {

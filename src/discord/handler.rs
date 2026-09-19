@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::config::DiscordConfig;
 use crate::events::{
-    BluePost, ChannelName, ChannelUpdate, DiscordEvent, DisplayName, Username, VoiceEvent,
+    ChannelName, ChannelUpdate, DiscordEvent, DisplayName, FeedPost, Username, VoiceEvent,
 };
 
 pub struct Handler {
@@ -37,26 +37,34 @@ impl EventHandler for Handler {
             return;
         };
 
-        let filter_lower = tc.filter.to_lowercase();
-        let matching_embed = msg.embeds.iter().find(|embed| {
-            embed
-                .title
-                .as_deref()
-                .is_some_and(|t| t.to_lowercase().contains(&filter_lower))
-        });
-
-        let Some(embed) = matching_embed else {
+        // A webhook can post plain text with no embed. An unfiltered channel still forwards it.
+        if msg.embeds.is_empty() && tc.filter.is_none() && !msg.content.trim().is_empty() {
+            self.send_event(DiscordEvent::FeedPost(FeedPost {
+                label: tc.label.clone(),
+                title: None,
+                url: None,
+                description: Some(msg.content.clone()),
+            }))
+            .await;
             return;
-        };
+        }
 
-        let info = BluePost {
-            title: embed.title.clone().unwrap_or_default(),
-            url: embed.url.clone(),
-            description: embed.description.clone(),
-        };
+        let matching = msg
+            .embeds
+            .iter()
+            .filter(|embed| tc.matches(embed.title.as_deref()));
 
-        tracing::info!(title = %info.title, "blue post detected, forwarding to telegram");
-        self.send_event(DiscordEvent::BluePost(info)).await;
+        for embed in matching {
+            let info = FeedPost {
+                label: tc.label.clone(),
+                title: embed.title.clone(),
+                url: embed.url.clone(),
+                description: embed.description.clone(),
+            };
+
+            tracing::info!(label = %info.label, title = ?info.title, "forwarding embed to telegram");
+            self.send_event(DiscordEvent::FeedPost(info)).await;
+        }
     }
 
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {

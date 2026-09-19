@@ -71,9 +71,10 @@ discord:
   tracked_channels:               # Voice channels to monitor
     - "111111111"
     - "222222222"
-  text_channels:                  # Text channels for blue post forwarding
+  text_channels:                  # Text channels mirrored into Telegram
     - id: "333333333"
-      filter: "Class Tuning Incoming"
+      filter: "Class Tuning Incoming"   # Optional — omit to forward every post
+      label: "Blue Post"                # Optional header, defaults to "News"
 ```
 
 
@@ -102,7 +103,7 @@ Discord Gateway ──▶ Discord Task ──▶ [mpsc channel] ──▶ Telegr
 - Weekly voice time statistics with Monday morning digests
 - Birthday greetings posted at midnight Kyiv time, once per day
 - Achievement detection (PartyStarter, SpeedRun, Boomerang, Channel Hopper, Dynamic Duo, and more)
-- Blue post forwarding — detects Discord embeds matching configured keywords and forwards to Telegram
+- Feed forwarding — mirrors a Discord text channel (a Wowhead webhook) into Telegram, filtered by title or unfiltered
 - State persistence across restarts via pinned Telegram message
 - Graceful shutdown on SIGINT/SIGTERM
 

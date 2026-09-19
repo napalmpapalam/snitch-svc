@@ -46,9 +46,9 @@ pub async fn run(
                             tracing::error!(%err, "failed to handle voice event");
                         }
                     }
-                    Some(DiscordEvent::BluePost(info)) => {
-                        if let Err(err) = svc.handle_blue_post(&info).await {
-                            tracing::error!(%err, "failed to handle blue post");
+                    Some(DiscordEvent::FeedPost(info)) => {
+                        if let Err(err) = svc.handle_feed_post(&info).await {
+                            tracing::error!(%err, "failed to handle feed post");
                         }
                     }
                     None => break,

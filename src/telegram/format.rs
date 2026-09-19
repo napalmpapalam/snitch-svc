@@ -2,7 +2,7 @@ use chrono::{NaiveDate, TimeDelta, Utc};
 use serenity::model::id::ChannelId;
 
 use crate::emoji;
-use crate::events::{BluePost, VoiceEvent};
+use crate::events::{FeedPost, VoiceEvent};
 
 use super::achievements::Achievement;
 use super::state::{ChannelNames, Sessions, WeeklyStats};
@@ -203,32 +203,60 @@ pub(crate) fn format_digest(
 /// Max description length to stay within Telegram's 4096-char message limit.
 const MAX_DESCRIPTION_LEN: usize = 3500;
 
-/// Formats a blue post embed for forwarding to Telegram.
-pub(crate) fn format_blue_post(info: &BluePost) -> String {
+/// Formats a forwarded Discord message for Telegram.
+pub(crate) fn format_feed_post(info: &FeedPost) -> String {
     let mut msg = String::from("<blockquote>");
-    msg.push_str("📰 <b>Blue Post</b>\n\n");
+    msg.push_str(&format!("📰 <b>{}</b>\n\n", html_escape(&info.label)));
 
-    match &info.url {
-        Some(url) => msg.push_str(&format!(
-            "📌 <a href=\"{}\">{}</a>\n",
-            html_escape(url),
-            html_escape(&info.title),
-        )),
-        None => msg.push_str(&format!("📌 <b>{}</b>\n", html_escape(&info.title))),
+    if let Some(headline) = format_headline(info.title.as_deref(), info.url.as_deref()) {
+        msg.push_str(&headline);
+        msg.push('\n');
     }
 
     if let Some(desc) = &info.description {
-        let escaped = html_escape(desc);
-        if escaped.len() > MAX_DESCRIPTION_LEN {
-            let truncated = &escaped[..MAX_DESCRIPTION_LEN];
-            msg.push_str(&format!("\n{truncated}…"));
-        } else {
-            msg.push_str(&format!("\n{escaped}"));
+        let (body, cut) = truncate_on_char_boundary(desc, MAX_DESCRIPTION_LEN);
+        msg.push_str(&html_escape(body));
+        if cut {
+            msg.push('…');
         }
     }
 
     msg.push_str("</blockquote>");
     msg
+}
+
+/// Builds the title line: a link when a URL is known, bold text otherwise.
+fn format_headline(title: Option<&str>, url: Option<&str>) -> Option<String> {
+    match (title, url) {
+        (Some(title), Some(url)) => Some(format!(
+            "📌 <a href=\"{}\">{}</a>\n",
+            html_escape(url),
+            html_escape(title),
+        )),
+        (Some(title), None) => Some(format!("📌 <b>{}</b>\n", html_escape(title))),
+        (None, Some(url)) => Some(format!(
+            "📌 <a href=\"{}\">{}</a>\n",
+            html_escape(url),
+            html_escape(url),
+        )),
+        (None, None) => None,
+    }
+}
+
+/// Cuts `text` to at most `max` bytes without splitting a character, and reports whether it cut.
+///
+/// Cutting before the HTML escape keeps a `&amp;` entity from being split in half.
+fn truncate_on_char_boundary(text: &str, max: usize) -> (&str, bool) {
+    if text.len() <= max {
+        return (text, false);
+    }
+
+    let end = (0..=max)
+        .rev()
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(0);
+
+    (text.get(..end).unwrap_or(text), true)
 }
 
 /// Formats the one-line birthday greeting.
@@ -264,7 +292,7 @@ pub(crate) fn html_escape(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_birthday;
+    use super::{format_birthday, truncate_on_char_boundary};
 
     #[test]
     fn names_user_by_display_name_and_username() {
@@ -287,5 +315,23 @@ mod tests {
             format_birthday("a&b", Some("<script>")),
             "<blockquote>🎂 <b>Happy birthday, &lt;script&gt; (a&amp;b)!</b> 🎉</blockquote>"
         );
+    }
+
+    #[test]
+    fn keeps_text_under_the_limit_whole() {
+        assert_eq!(truncate_on_char_boundary("hello", 10), ("hello", false));
+    }
+
+    #[test]
+    fn cuts_without_splitting_a_multi_byte_char() {
+        // "Семёныч" is two bytes per char, so byte 5 lands mid-character.
+        let (cut, truncated) = truncate_on_char_boundary("Семёныч", 5);
+        assert!(truncated);
+        assert_eq!(cut, "Се");
+    }
+
+    #[test]
+    fn cuts_to_empty_when_the_first_char_does_not_fit() {
+        assert_eq!(truncate_on_char_boundary("Семёныч", 1), ("", true));
     }
 }

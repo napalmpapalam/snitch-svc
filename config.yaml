@@ -37,5 +37,10 @@ discord:
     - "1257044413302046859"
     - "1257044413302046858"
   text_channels:
+    # Wowhead Blue Tracker webhook
     - id: "1279905749686026321"
       filter: "Class Tuning Incoming"
+      label: "Blue Post"
+    # Wowhead news webhook in #wow-forever-news — no filter, every post is forwarded
+    - id: "1550801657451909211"
+      label: "WoW Forever"

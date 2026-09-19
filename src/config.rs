@@ -70,12 +70,32 @@ pub struct DiscordConfig {
     pub token: SecretString,
 }
 
+/// A Discord text channel mirrored into Telegram.
 #[derive(Debug, Deserialize)]
 pub struct TextChannelConfig {
     #[serde(deserialize_with = "deserialize_channel_id")]
     pub id: ChannelId,
-    #[serde(deserialize_with = "deserialize_trimmed")]
-    pub filter: String,
+    /// Title substring an embed must contain. Absent forwards every message.
+    #[serde(default)]
+    pub filter: Option<String>,
+    /// Header shown on the forwarded Telegram message.
+    #[serde(default = "default_label", deserialize_with = "deserialize_trimmed")]
+    pub label: String,
+}
+
+fn default_label() -> String {
+    "News".to_owned()
+}
+
+impl TextChannelConfig {
+    /// Whether an embed title passes this channel's filter. No filter accepts everything.
+    pub fn matches(&self, title: Option<&str>) -> bool {
+        let Some(filter) = &self.filter else {
+            return true;
+        };
+
+        title.is_some_and(|t| t.to_lowercase().contains(&filter.to_lowercase()))
+    }
 }
 
 impl Config {
@@ -175,7 +195,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::Birthday;
+    use super::{Birthday, TextChannelConfig};
 
     fn parse(date: &str) -> Result<Birthday, serde_yaml::Error> {
         serde_yaml::from_str(&format!("username: someone\ndate: \"{date}\""))
@@ -218,5 +238,26 @@ mod tests {
         assert!(birthday.is_today(date(2027, 7, 24)));
         assert!(!birthday.is_today(date(2026, 7, 25)));
         assert!(!birthday.is_today(date(2026, 8, 24)));
+    }
+
+    fn channel(yaml: &str) -> TextChannelConfig {
+        serde_yaml::from_str(yaml).expect("valid channel config")
+    }
+
+    #[test]
+    fn unfiltered_channel_accepts_every_title() {
+        let tc = channel("id: \"1\"");
+        assert!(tc.matches(Some("anything at all")));
+        assert!(tc.matches(None));
+        assert_eq!(tc.label, "News");
+    }
+
+    #[test]
+    fn filtered_channel_matches_case_insensitively() {
+        let tc = channel("id: \"1\"\nfilter: \"Class Tuning\"\nlabel: \"Blue Post\"");
+        assert!(tc.matches(Some("CLASS TUNING Incoming")));
+        assert!(!tc.matches(Some("Hotfixes")));
+        assert!(!tc.matches(None));
+        assert_eq!(tc.label, "Blue Post");
     }
 }
